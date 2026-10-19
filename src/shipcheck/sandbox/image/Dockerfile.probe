@@ -1,0 +1,41 @@
+# Dockerfile for shipcheck-probe base microVM image
+# Pre-bakes all security tools so no pip install / apt-get is required at probe runtime
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install core utilities and Node.js 20
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    jq \
+    build-essential \
+    sqlite3 \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Gitleaks
+ARG GITLEAKS_VERSION=8.18.2
+RUN curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+
+# Install OSV-Scanner
+ARG OSV_VERSION=v1.7.4
+RUN curl -sSL -o /usr/local/bin/osv-scanner https://github.com/google/osv-scanner/releases/download/${OSV_VERSION}/osv-scanner_linux_amd64 && \
+    chmod +x /usr/local/bin/osv-scanner
+
+# Install Python scanning tools and common target libraries
+RUN pip install --no-cache-dir \
+    semgrep \
+    pip-audit \
+    flask \
+    requests \
+    pytest \
+    pytest-asyncio
+
+# Warm the Semgrep ruleset cache at build time (PRD Gotcha & Build Plan)
+RUN semgrep --config p/owasp-top-ten --dry-run /tmp || true
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

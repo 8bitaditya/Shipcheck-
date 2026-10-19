@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI: ShipCheck Server",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "shipcheck.api.main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "jinja": true,
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "CLI: Run Scan on VulnShop",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/run_scan.py",
+      "args": [
+        "--target",
+        "${workspaceFolder}/fixtures/vulnshop"
+      ],
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "Pytest: All Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "-v"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -e
+
+# ShipCheck Chained Execution Harness
+# Ensures start -> readiness -> attack -> capture runs in a single microVM run chain
+
+TARGET_DIR="{{ target_dir | default('/workspace') }}"
+APP_CMD="{{ app_cmd | default('python app.py') }}"
+PORT="{{ port | default(5000) }}"
+HEALTH_PATH="{{ health_path | default('/') }}"
+TIMEOUT_SECS="{{ timeout_secs | default(15) }}"
+
+cd "$TARGET_DIR"
+
+# 1. Start application in background
+echo "[ShipCheck] Starting target application: $APP_CMD on port $PORT"
+$APP_CMD > /tmp/app_stdout.log 2> /tmp/app_stderr.log &
+APP_PID=$!
+
+cleanup() {
+    echo "[ShipCheck] Tearing down target process $APP_PID"
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# 2. Readiness polling (poll up to TIMEOUT_SECS)
+READY=0
+for i in $(seq 1 "$TIMEOUT_SECS"); do
+    if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}${HEALTH_PATH}" | grep -q '^[23]'; then
+        READY=1
+        break
+    fi
+    sleep 0.5
+done
+
+if [ "$READY" -ne 1 ]; then
+    echo "[ShipCheck ERROR] Target application failed to start or respond within $TIMEOUT_SECS seconds"
+    echo "--- App stderr ---"
+    cat /tmp/app_stderr.log
+    exit 1
+fi
+
+echo "[ShipCheck] Target application is UP. Firing payload..."
+
+# 3. Fire the attack probe
+START_TS=$(date +%s%N)
+{{ attack_curl_cmd }} > /tmp/probe_response.txt 2> /tmp/probe_stderr.log || true
+END_TS=$(date +%s%N)
+DURATION_MS=$(( (END_TS - START_TS) / 1000000 ))
+
+echo "[ShipCheck] Probe finished in ${DURATION_MS}ms."
+echo "=== SHIPCHECK_RESPONSE_START ==="
+cat /tmp/probe_response.txt
+echo ""
+echo "=== SHIPCHECK_RESPONSE_END ==="
