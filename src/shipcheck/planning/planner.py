@@ -106,7 +106,7 @@ TAVILY RESEARCH GROUNDING:
 Answer: {grounding.get('answer')}
 Sources: {grounding.get('sources')}
 
-Generate a structured AttackPlanBatch JSON.
+Generate a structured attack plan batch (AttackPlanBatch JSON).
 """
 
         plan_json = await self.llm.complete_json(

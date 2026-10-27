@@ -1,118 +1,302 @@
 # ShipCheck 🚢🛡️
 
 > **Adversarial verification gate for AI-generated code.**
-> *"Don’t trust AI-generated code — attack it. ShipCheck proves vulnerabilities with working exploits in isolated sandboxes, fixes them, proves the fix, and hands you the PR."*
+> Don't trust AI-generated code. Test it. ShipCheck proves a vulnerability is real inside an isolated sandbox, fixes it, proves the fix works, and hands a human a draft PR.
 
 Built for the **Nebius x NVIDIA Global AI Hackathon** (Coding and Agentic Engineering Track).
 
----
-
-## 🎯 The Core Thesis
-
-Published studies reveal that AI coding assistants generate code with vulnerability rates between **25% and 45%**. Furthermore, AI-generated pull requests often carry synthetic tests designed to make CI turn green without validating genuine security boundaries.
-
-**ShipCheck** operates an offensive-as-a-service verification and rectification loop:
-1. **Ingests** a pull request diff or repository URL.
-2. **Triages** via fast static analyzers (`gitleaks`, `pip-audit`, `osv-scanner`, `semgrep`).
-3. **Plans Attacks** with NVIDIA **Nemotron-3-Ultra** (leveraging its 1M context window) grounded by **Tavily** exploit writeups.
-4. **Executes Parallel Probes** inside disposable **Nebius Token Factory Sandboxes** (`contree-sdk`) against 4 deterministic vulnerability classes.
-5. **Proves Exploits** using objective boolean markers (never LLM guesswork).
-6. **Rectifies & Re-verifies**: NVIDIA **Nemotron-3-Super** synthesizes diff-hunk JSON patches, re-runs the exploit in a child sandbox branch (proving the exploit is closed), verifies existing test suites remain green, and opens a draft GitHub PR for a human.
-
-**ShipCheck never auto-merges — a human reviewer makes the final call.**
+> **Status (2026-10-27, `draft` branch):** the data contracts and the individual pipeline stages (triage, planning, probing, scoring, sandboxes, LLM client) are built and tested. The end-to-end orchestrator, the fix engine, the PR bot and the dashboard are **not built yet**. See [Current status](#-current-status) before running anything.
 
 ---
 
-## 🏗️ Architecture & Component Map
+## 📌 The Problem
+
+Static analysis tools produce a lot of false positives. A developer sees dozens of vague warnings, ignores them, and merges anyway. Published studies put the vulnerability rate of AI-generated code at 25–45%, and AI-written PRs often come with tests that turn CI green without checking any security boundary.
+
+ShipCheck answers one question:
+
+> **"Can this change actually be exploited, right now, with a real request?"**
+
+- **If yes:** it records deterministic proof (the request sent, a response excerpt, the matched marker), generates a surgical `{file, search, replace}` patch, re-runs the same attack against the patched code in a clean sandbox, and opens a **draft** PR with the evidence.
+- **If no:** it suppresses the alert so developers aren't interrupted.
+- **A human always merges.** ShipCheck never auto-merges.
+
+---
+
+## 🔄 How the Pipeline Works
+
+```
+GitHub PR diff
+      │
+      ▼
+1. Ingest   – fetch the PR diff, copy changed files into a disposable sandbox
+      │
+      ▼
+2. Triage   – fast static scanners: gitleaks → pip-audit / osv-scanner → semgrep
+      │         (SARIF normalized into Finding objects, deduplicated, scoped to the diff)
+      ▼
+3. Plan     – Nemotron Ultra turns findings + diff into an AttackPlanBatch,
+      │         grounded by Tavily research (falls back to canonical templates)
+      ▼
+4. Probe    – start the target app and send the request in the SAME sandbox run
+      │         (localhost only, no egress), capture the raw response
+      ▼
+5. Verdict  – deterministic marker check (string/regex, never an LLM)
+      │         + 0–100 risk score
+      ▼
+6. Rectify  – Nemotron Super writes a search/replace patch, the probe is re-run
+      │         (must now fail), and the repo's tests must still pass
+      ▼
+7. Draft PR – opened with a least-privilege token, for a human to review
+```
+
+**Key rule:** LLMs *plan* attacks and *write* fixes. They never decide whether an attack worked. That is a boolean marker check in code, so the verdict can't be hallucinated.
+
+### Architecture
 
 ```
 ┌────────────────────────────────────────┐
-│  Dashboard + API (FastAPI Stateless)   │  <-- Nebius Serverless Endpoint
-│  POST /scan  -->  Live Stream / Verdict │
+│  Dashboard + API (FastAPI, stateless)  │  ← planned: Nebius Serverless endpoint
 └───────────────────┬────────────────────┘
-                    │
       ┌─────────────┼──────────────┐
       ▼             ▼              ▼
 ┌───────────┐ ┌───────────┐ ┌─────────────┐
 │ Nemotron  │ │  Sandbox  │ │   Tavily    │
 │  Client   │ │  Client   │ │  Grounding  │
 └─────┬─────┘ └─────┬─────┘ └──────┬──────┘
-      │             │              │
-      │   asyncio.gather (sem=40)  │
-      ▼             ▼              ▼
+      └─────────────┼──────────────┘
+                    ▼   asyncio, capped at 40 concurrent ops
 ┌────────────────────────────────────────┐
-│   Parallel MicroVM Disposable Probes   │  <-- Contree Sandboxes (localhost only)
-│  SQLi | CMDi | Traversal | Reflected XSS│
+│   Parallel disposable probe sandboxes  │  ← ConTree microVMs (or local fallback)
 └───────────────────┬────────────────────┘
-                    │ (Confirmed Marker Fired)
-                    ▼
+                    ▼  marker confirmed
 ┌────────────────────────────────────────┐
-│  Rectification: Patch + Child Re-probe │  <-- Re-run probe (fails) + Tests pass
+│  Rectification: patch + child re-probe │
 └───────────────────┬────────────────────┘
                     ▼
 ┌────────────────────────────────────────┐
-│  Draft GitHub PR (Never Auto-Merged)   │  <-- Least-privilege PAT with evidence
+│  Draft GitHub PR (never auto-merged)   │
 └────────────────────────────────────────┘
 ```
 
 ---
 
-## 🤖 Model Tier Mapping (NVIDIA Nemotron 3)
+## ✅ Current Status
 
-| Tier | Model ID | Context | Role in ShipCheck |
-| :--- | :--- | :--- | :--- |
-| **Ultra** | `nvidia/Nemotron-3-Ultra-550b-a55b` | 1M | Attack planning over full PR diff + triage findings; complex patch synthesis. |
-| **Super** | `nvidia/nemotron-3-super-120b-a12b` | 256K | Orchestrator/supervisor; PoC script generation; patch review & validation. |
-| **Nano** | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | 262K | Log compaction, pass/fail parsing, evidence summarization, Tavily query formulation. |
-| **Lightning** | `nvidia/Nemotron-3_5-Lightning` | 1M | High-throughput JSON extraction and parsing loops. |
+What is in the `draft` branch today, and what still needs building.
+
+| Stage | Module | Status |
+| :--- | :--- | :--- |
+| Data contracts | `contracts/` | ✅ Built. 26 unit tests |
+| Diff ingest | `ingest/diff.py`, `ingest/github_ingest.py` | ✅ Built (diff parser, PR diff fetch, repo clone). No tests yet |
+| Triage | `triage/` | ✅ Built (gitleaks, pip-audit, osv-scanner, semgrep → SARIF → `Finding`, dedup). No tests yet |
+| Attack planning | `planning/planner.py`, `planning/tavily_client.py` | ✅ Built. Uses the mock LLM and offline grounding when no keys are set. No tests yet |
+| Probe harness | `probes/harness.py`, `probes/markers.py` | ✅ Built for 4 classes: SQLi, command injection, path traversal, reflected XSS. No tests yet |
+| Risk scoring | `contracts/verdict.py`, `scoring/reachability.py` | ✅ Built (`compute_risk_score`, reachability heuristic) |
+| Sandboxes | `sandbox/` | ✅ Built. ConTree backend + local fallback. 9 tests |
+| LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
+| Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
+| **End-to-end orchestrator** | — | ❌ Not built: nothing yet chains ingest → triage → plan → probe → verdict |
+| **Fix engine / patcher** | — | ❌ Not built. `DiffHunk.apply_to_text` and the `fixer.md` prompt exist, but no module calls them |
+| **PR bot** | — | ❌ Not built |
+| **API + dashboard** | `shipcheck.api.main` | ❌ Not built |
+| **Demo fixture + golden-run replay** | `fixtures/`, `golden/` | ❌ Not built |
+
+**Vulnerability classes:** the contracts define 10 (`sqli`, `cmdi`, `traversal`, `xss`, `ssrf`, `ssti`, `idor`, `deserialization`, `secrets`, `deps`, plus `other`). The probe harness can currently execute **4** of them (SQLi, CMDi, traversal, XSS). The other classes have templates in `CANONICAL_ATTACK_TEMPLATES` but no probe yet.
+
+### Known broken references (fix before shipping)
+
+- **`Dockerfile`** copies `fixtures/` and `golden/` and starts `shipcheck.api.main:app`. None of these exist yet, so `docker build` fails.
+- **`.github/workflows/tests.yml`** runs `tests/test_markers.py`, `test_json_extract.py`, `test_patcher.py`, `test_risk.py` and `tests/e2e/test_vulnshop_sqli.py`. None of these exist yet, and the workflow only triggers on `main`. Until it's updated, CI will fail once `draft` is merged into `main`.
 
 ---
 
-## 🛠️ Sandbox & Infrastructure Stack
+## 🚀 Quickstart (what works today)
 
-- **Nebius Token Factory Sandboxes (`contree-sdk==0.3.6`)**: Isolated Firecracker microVMs for deterministic exploit execution.
-- **Localhost Isolation**: App and probe attack harness run within the same microVM network namespace, eliminating egress dependencies.
-- **Tavily Search API**: Grounds every finding with real CVE IDs, affected library versions, and canonical security advisories.
-- **Nebius Serverless Endpoint**: Hosts the public FastAPI + Dashboard container.
-- **Golden Run Replay Engine**: Guarantees instant, reliable evaluation for hackathon judges without cloud API downtime.
+Requires **Python 3.11+** and `git`. Docker is **not** needed for local development: the default sandbox runs commands in a temporary directory on your machine.
 
----
+### 1. Install
 
-## 🚀 Quickstart
-
-### 1. Installation
 ```bash
-git clone https://github.com/your-org/shipcheck.git
-cd shipcheck
-python -m venv .venv
-source .venv/bin/activate  # Or on Windows: .venv\Scripts\activate
+git clone -b draft https://github.com/8bitaditya/Shipcheck-.git
+cd Shipcheck-
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 2. Environment Setup
+### 2. Run the test suite
+
+```bash
+python -m pytest
+```
+
+Expected: **35 passed** (26 contract tests + 9 sandbox tests). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+
+### 3. Configure (optional)
+
+Everything runs offline with mocks by default. To use real services:
+
 ```bash
 cp .env.example .env
-# Edit .env with your NEBIUS_API_KEY, NEBIUS_PROJECT_ID, and TAVILY_API_KEY
 ```
 
-### 3. Run Offline Smoke Tests & Mock Pipeline
-```bash
-# Marker verification
-pytest tests/test_markers.py -v
+| Variable | Purpose | Default when unset |
+| :--- | :--- | :--- |
+| `NEBIUS_API_KEY`, `NEBIUS_PROJECT_ID` | Nemotron models + ConTree sandboxes | Mock LLM; local sandbox |
+| `TAVILY_API_KEY` | Exploit research grounding | Offline fallback text |
+| `GITHUB_TOKEN`, `GITHUB_REPOSITORY` | Fetch PR diffs / open draft PRs | — |
+| `LLM_BACKEND` | `nemotron` or `mock` | `mock` |
+| `SANDBOX_BACKEND` | `contree`, `docker` or `mock` | `mock` |
+| `MAX_CONCURRENT_OPS` | Cap on parallel sandbox ops (Token Factory beta limit is 50) | `40` |
 
-# E2E scan on the included fixture
-python scripts/run_scan.py --target fixtures/vulnshop
+Notes on how the fallbacks behave:
+- `docker` and `mock` both use the **local** backend (`LocalDockerBackend`, a temp-directory subprocess sandbox). Only `contree` uses Nebius microVMs, and it falls back to local if the key is missing or the backend fails to start.
+- The planner uses the mock LLM whenever `LLM_BACKEND=mock` **or** `NEBIUS_API_KEY` is empty. In mock mode it returns a fixed set of 4 sample plans (one per probe class), whatever findings you pass in. If the LLM's JSON can't be parsed, the planner builds plans from `CANONICAL_ATTACK_TEMPLATES` instead.
+
+### 4. Use the stages from Python
+
+There's no CLI or API yet, so for now you call the stages directly:
+
+```python
+import asyncio
+from shipcheck.contracts import (
+    Finding, FindingTarget, VulnClass, SeverityLevel,
+    ReachabilityLevel, ExposureLevel, compute_risk_score,
+)
+from shipcheck.planning.planner import AttackPlanner
+
+finding = Finding(
+    vuln_class=VulnClass.SQLI,
+    title="User input concatenated into SQL query",
+    target=FindingTarget(file="app.py", line=42, endpoint="/login"),
+    tool="semgrep",
+    rule_id="python.sqli",
+)
+
+# Offline: uses the mock LLM + offline Tavily grounding
+batch = asyncio.run(AttackPlanner().plan_attacks("<diff text>", [finding]))
+for plan in batch.plans:
+    print(plan.vuln_class.value, plan.route, plan.expected_marker)
+
+# Deterministic 0–100 risk score
+score = compute_risk_score(
+    severity=SeverityLevel.HIGH,
+    is_confirmed=True,
+    reachability=ReachabilityLevel.DIRECT,
+    exposure=ExposureLevel.PUBLIC,
+)
+print(score.final_score, score.explanation)
 ```
 
-### 4. Start Dashboard
-```bash
-uvicorn shipcheck.api.main:app --reload --port 8000
+---
+
+## 🧱 Core Contracts
+
+The contracts in `src/shipcheck/contracts/` (Pydantic v2) are the **frozen interfaces** every stage uses, so team members can build independently. Design rationale: [`CONTRACTS_DECISIONS.md`](CONTRACTS_DECISIONS.md) and [`docs/contracts_design_decisions.md`](docs/contracts_design_decisions.md).
+
+| Contract | File | What it holds |
+| :--- | :--- | :--- |
+| `Finding`, `FindingTarget` | `finding.py` | One suspect, carried through every stage: `{target, probe, evidence, verdict, fix}` + scanner metadata. `fingerprint()` for dedup |
+| `AttackPlan`, `AttackPlanBatch` | `attack_plan.py` | One probe: `{vuln_class, target_file, sink, payload_strategy, expected_marker}` + route/method/parameter. `VulnClass` (with alias normalization) and `CANONICAL_ATTACK_TEMPLATES` |
+| `Evidence`, `ProbeVerdict` | `evidence.py` | Captured sandbox result: request, status, response excerpt, `marker_found`. `Evidence.capture()` decides the verdict by string match only |
+| `DiffHunk`, `FixPatch`, `FixStatus` | `fix.py` | Surgical `{file, search, replace}` hunks. `search` must match exactly once, and full-file rewrites are rejected |
+| `VerdictCard`, `compute_risk_score` | `verdict.py` | Deterministic score and gate decision |
+
+### Risk score
+
 ```
-Open [http://localhost:8000](http://localhost:8000) in your browser.
+score = severity_base × confirmed_factor × reachability_factor × exposure_factor
+```
+
+| Factor | Values |
+| :--- | :--- |
+| Severity base | CRITICAL 100 · HIGH 80 · MEDIUM 50 · LOW 20 · INFO 5 |
+| Confirmed | 1.0 if the sandbox probe confirmed it · **0.05 if unconfirmed** |
+| Reachability | DIRECT 1.0 · CONDITIONAL 0.7 · UNKNOWN 0.5 · UNREACHABLE 0.05 |
+| Exposure | PUBLIC 1.0 · AUTHENTICATED 0.75 · INTERNAL 0.5 · LOCAL 0.25 |
+
+A confirmed critical finding on a public, directly reachable endpoint scores 100. An unconfirmed scanner alert scores near 0, so proven issues rise to the top.
+
+---
+
+## 🤖 Model Tiers (NVIDIA Nemotron 3)
+
+| Tier | Model ID | Context | Role |
+| :--- | :--- | :--- | :--- |
+| **Ultra** | `nvidia/Nemotron-3-Ultra-550b-a55b` | 1M | Attack planning over the full diff + findings; hard patches |
+| **Super** | `nvidia/nemotron-3-super-120b-a12b` | 256K | Orchestration, PoC generation, patch review |
+| **Nano** | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | 262K | Log compaction, pass/fail parsing, summaries, Tavily queries |
+| **Lightning** | `nvidia/Nemotron-3_5-Lightning` | 1M | High-throughput JSON extraction |
+
+Ultra is reserved for planning and hard fixes. Super and Nano handle everyday calls to stay within the credit budget.
+
+---
+
+## 📁 Repository Structure
+
+```
+Shipcheck-/
+├── src/shipcheck/
+│   ├── config.py                 # env-driven settings + backend selectors
+│   ├── contracts/                # frozen Pydantic interfaces (see above)
+│   ├── ingest/                   # unified-diff parser, GitHub PR fetch/clone
+│   ├── triage/                   # gitleaks, deps, semgrep, SARIF parser, runner
+│   ├── planning/                 # AttackPlanner (Nemotron Ultra) + Tavily client
+│   ├── probes/                   # probe harness, deterministic markers, per-class probes
+│   ├── scoring/                  # reachability heuristic
+│   ├── sandbox/                  # SandboxClient, ConTree + local backends, probe image
+│   └── llm/                      # Nemotron client, mock LLM, JSON extraction, prompts/
+├── tests/
+│   ├── test_contracts.py         # 26 tests
+│   └── test_sandbox.py           # 9 tests
+├── docs/
+│   ├── PRD.pdf, BUILD_PLAN.pdf   # product requirements + day-by-day plan
+│   ├── contracts_design_decisions.md
+│   └── ATTACK_PLAN_README.md     # original attack-plan branch README
+├── ProjectExplain.md             # plain-language walkthrough of the whole system
+├── CONTRACTS_DECISIONS.md        # architectural decision records
+├── PRoject.txt                   # build notes
+├── Dockerfile                    # ⚠ references paths that don't exist yet
+├── .github/workflows/tests.yml   # ⚠ references tests that don't exist yet
+├── requirements.txt, pyproject.toml, .env.example
+└── LICENSE
+```
+
+---
+
+## 🧭 Next Steps
+
+1. **Orchestrator:** one entry point that runs ingest → triage → plan → probe (in parallel, capped at `MAX_CONCURRENT_OPS`) → verdict, and returns `Finding`s with `probe`, `evidence` and `verdict` filled in.
+2. **Fix engine:** call Nemotron Super with `fixer.md`, parse the result into a `FixPatch`, apply it with `DiffHunk.apply_to_text`, re-run the same probe in a child sandbox (it must fail), then run the repo's tests.
+3. **PR bot:** open a draft PR containing the evidence and `VerdictCard` summaries.
+4. **API + dashboard:** FastAPI app at `shipcheck.api.main` with `POST /scan`.
+5. **Demo fixture + golden-run replay**, then fix the `Dockerfile` and CI workflow so they point at real paths and tests.
+6. Tests for triage, planner, harness and markers.
+
+---
+
+## 🛡️ Guarantees
+
+1. **Deterministic verification:** LLMs plan and fix; code decides whether an attack worked.
+2. **Surgical fixes:** a patch only applies if its `search` text matches the source exactly once.
+3. **Double verification:** every fix is re-attacked with the same probe and regression-tested before a PR is opened.
+4. **Isolation:** probes run against the app on localhost inside a disposable sandbox, never against real systems.
+5. **Human authority:** a person always makes the merge decision.
+
+---
+
+## 👥 Team
+
+| Branch | Contributor | Contribution |
+| :--- | :--- | :--- |
+| `UI/Ai` | Aditya Dhavale | Pipeline implementation: sandboxes, triage, planner, probes, LLM client, Docker/CI setup |
+| `attack-plan` | Prem PawanKumar Dubay | Frozen core contracts, attack templates, design decisions, project explainer |
+| `draft` | Parth | Integration of both branches onto the canonical contracts; AI/model work |
 
 ---
 
 ## 📄 License
 
-Licensed under the [Apache-2.0 License](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).
