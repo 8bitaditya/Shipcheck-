@@ -49,3 +49,6 @@ reports/*
 golden/run-*/raw_logs/
 tmp/
 scratch/
+
+# Compiled class files
+*.class
