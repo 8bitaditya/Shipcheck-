@@ -1,0 +1,14 @@
+# Keep the build context small: only what the Dockerfile COPYs is needed
+.git
+.venv
+venv
+.env
+**/__pycache__
+**/*.egg-info
+.pytest_cache
+.coverage
+htmlcov
+reports
+docs
+.vscode
+.idea
