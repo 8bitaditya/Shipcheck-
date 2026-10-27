@@ -39,3 +39,7 @@ jobs:
     - name: Run rectification tests (FR-6)
       run: |
         pytest tests/test_rectify.py -v
+
+    - name: Run orchestrator tests
+      run: |
+        pytest tests/test_orchestrator.py -v
