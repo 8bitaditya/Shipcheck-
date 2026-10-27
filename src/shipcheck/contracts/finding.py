@@ -1,43 +1,202 @@
-"""Contract: Static Triage Findings. Frozen for Week 1."""
+"""Finding Contract for ShipCheck.
 
-from enum import Enum
-from typing import Any, Dict, Optional
+Defines the central finding entity representing an identified vulnerability suspect
+from static triage through exploit planning, sandbox probe execution, risk scoring,
+and rectification.
+
+Fields strictly implement:
+    {probe, target, verdict, evidence}
+along with scanner triage attributes and optional fix proposals.
+
+JSON Shape:
+    {
+        "finding_id": "find-sqli-001",
+        "vuln_class": "sqli",
+        "tool": "semgrep",
+        "rule_id": "python.flask.security.sqli-injection",
+        "title": "Unsanitized user input in SQL query",
+        "target": {
+            "file": "app.py",
+            "line": 42,
+            "sink": "db.execute()",
+            "endpoint": "/login",
+            "code_snippet": "db.execute(f\\"SELECT * FROM users WHERE name='{name}'\\")"
+        },
+        "probe": { ... AttackPlan ... },
+        "evidence": { ... Evidence ... },
+        "verdict": { ... VerdictCard ... },
+        "fix": { ... FixPatch ... }
+    }
+"""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-
-class FindingSeverity(str, Enum):
-    CRITICAL = "CRITICAL"
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
-    INFO = "INFO"
+from shipcheck.contracts.attack_plan import AttackPlan, VulnClass
+from shipcheck.contracts.evidence import Evidence
+from shipcheck.contracts.fix import FixPatch
+from shipcheck.contracts.verdict import SeverityLevel, VerdictCard
 
 
-class VulnClass(str, Enum):
-    SQLI = "SQLi"
-    COMMAND_INJECTION = "Command Injection"
-    PATH_TRAVERSAL = "Path Traversal"
-    REFLECTED_XSS = "Reflected XSS"
-    SECRET_LEAK = "Secret Leak"
-    INSECURE_DEPENDENCY = "Insecure Dependency"
-    OTHER = "Other"
+class FindingTarget(BaseModel):
+    """Specific code location and entrypoint where the suspected vulnerability resides."""
+    file: str = Field(
+        ...,
+        description="Relative path to the affected file in the repository (e.g. app.py)"
+    )
+    line: Optional[int] = Field(
+        default=None,
+        description="Start line number of the suspect code hunk in the file"
+    )
+    end_line: Optional[int] = Field(
+        default=None,
+        description="End line number of the suspect code hunk"
+    )
+    sink: Optional[str] = Field(
+        default=None,
+        description="The dangerous function or operation (e.g. db.execute(), os.system(), open())"
+    )
+    source: Optional[str] = Field(
+        default=None,
+        description="The unvalidated source of user input (e.g. request.form['username'])"
+    )
+    endpoint: Optional[str] = Field(
+        default=None,
+        description="HTTP route or CLI interface exposing this target (e.g. /login)"
+    )
+    code_snippet: Optional[str] = Field(
+        default=None,
+        description="Code excerpt from the diff highlighting the vulnerability"
+    )
 
 
 class Finding(BaseModel):
-    """Normalized finding produced by static triage tools (Semgrep, Gitleaks, osv-scanner, pip-audit)."""
+    """Unified Finding object flowing across all stages of ShipCheck.
+    
+    Fields strictly implement:
+        {probe, target, verdict, evidence}
+    with triage scanner metadata and rectification fix links.
+    """
+    finding_id: str = Field(
+        default_factory=lambda: f"find-{uuid.uuid4().hex[:12]}",
+        description="Unique identifier for this finding"
+    )
+    vuln_class: VulnClass = Field(
+        ...,
+        description="Class of vulnerability (sqli, cmdi, traversal, xss, secrets, deps)"
+    )
+    title: str = Field(
+        ...,
+        description="Concise description of the security issue"
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Detailed technical description or scanner rationale"
+    )
+    
+    # Core Contract Quad: {probe, target, verdict, evidence}
+    target: FindingTarget = Field(
+        ...,
+        description="Specific code location, file, and sink"
+    )
+    probe: Optional[AttackPlan] = Field(
+        default=None,
+        description="Attack plan defining payload strategy and expected marker"
+    )
+    evidence: Optional[Evidence] = Field(
+        default=None,
+        description="Concrete exploit evidence captured from sandbox execution"
+    )
+    verdict: Optional[VerdictCard] = Field(
+        default=None,
+        description="Deterministic 0-100 risk score and confirmation status"
+    )
 
-    id: str = Field(..., description="Unique deterministic identifier (hash of tool+rule+file+line)")
-    tool: str = Field(..., description="Scanner name: semgrep, gitleaks, pip-audit, osv-scanner")
-    vuln_class: VulnClass = Field(default=VulnClass.OTHER, description="Normalized vulnerability class")
-    rule_id: str = Field(..., description="Original scanner rule ID")
-    file_path: str = Field(..., description="Relative file path in repository")
-    line_start: int = Field(default=1, description="Start line number")
-    line_end: int = Field(default=1, description="End line number")
-    severity_hint: FindingSeverity = Field(default=FindingSeverity.MEDIUM, description="Initial triage severity")
-    message: str = Field(default="", description="Descriptive triage message")
-    sink_snippet: Optional[str] = Field(default=None, description="Suspect code snippet at target sink")
-    raw_sarif: Optional[Dict[str, Any]] = Field(default=None, description="Original raw SARIF block if available")
+    # Rectification extension
+    fix: Optional[FixPatch] = Field(
+        default=None,
+        description="Verified diff-hunk patch generated by the fixer engine"
+    )
+
+    # Triage provenance metadata
+    tool: str = Field(
+        default="semgrep",
+        description="Scanner or engine that initially flagged the finding (semgrep, gitleaks, pip-audit, etc.)"
+    )
+    rule_id: Optional[str] = Field(
+        default=None,
+        description="Specific scanner rule identifier"
+    )
+    severity: SeverityLevel = Field(
+        default=SeverityLevel.HIGH,
+        description="Initial static severity classification"
+    )
+    cve_id: Optional[str] = Field(
+        default=None,
+        description="Grounding CVE identifier (retrieved via Tavily or osv-scanner)"
+    )
+    cwe_id: Optional[str] = Field(
+        default=None,
+        description="Standard Common Weakness Enumeration ID (e.g. CWE-89 for SQLi)"
+    )
+    created_at: str = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        description="UTC creation timestamp"
+    )
+
+    @property
+    def is_confirmed(self) -> bool:
+        """True if live sandbox probe proved vulnerability presence via marker."""
+        if self.evidence and self.evidence.marker_found:
+            return True
+        if self.verdict and self.verdict.marker_verified:
+            return True
+        return False
+
+    @property
+    def score(self) -> float:
+        """Returns the final 0-100 risk score, or 0.0 if not yet evaluated."""
+        if self.verdict:
+            return self.verdict.score
+        return 0.0
 
     def fingerprint(self) -> str:
-        """Deterministic fingerprint for deduplication."""
-        return f"{self.tool}:{self.rule_id}:{self.file_path}:{self.line_start}"
+        """Deterministic fingerprint for cross-scanner deduplication."""
+        return f"{self.tool}:{self.rule_id}:{self.target.file}:{self.target.line}"
+
+    @classmethod
+    def create_triage_finding(
+        cls,
+        vuln_class: VulnClass,
+        file: str,
+        title: str,
+        line: Optional[int] = None,
+        sink: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        code_snippet: Optional[str] = None,
+        tool: str = "semgrep",
+        rule_id: Optional[str] = None,
+        severity: SeverityLevel = SeverityLevel.HIGH,
+        cwe_id: Optional[str] = None,
+    ) -> Finding:
+        """Factory for creating initial triage findings prior to probe planning."""
+        target = FindingTarget(
+            file=file,
+            line=line,
+            sink=sink,
+            endpoint=endpoint,
+            code_snippet=code_snippet,
+        )
+        return cls(
+            vuln_class=vuln_class,
+            title=title,
+            target=target,
+            tool=tool,
+            rule_id=rule_id,
+            severity=severity,
+            cwe_id=cwe_id,
+        )

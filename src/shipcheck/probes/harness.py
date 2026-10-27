@@ -6,9 +6,8 @@ import time
 from typing import Optional, Tuple
 from jinja2 import Template
 
-from shipcheck.contracts.attack_plan import AttackStep
-from shipcheck.contracts.evidence import EvidenceBlob, ProbeVerdict, RequestMeta
-from shipcheck.contracts.finding import VulnClass
+from shipcheck.contracts.attack_plan import AttackPlan, VulnClass
+from shipcheck.contracts.evidence import Evidence, ProbeVerdict
 from shipcheck.sandbox.base import SandboxBase
 from shipcheck.probes.markers import (
     check_sqli_marker,
@@ -51,17 +50,28 @@ class ProbeHarness:
     def __init__(self, port: int = 5000):
         self.port = port
 
-    def _build_probe_command(self, step: AttackStep, payload: str) -> str:
+    def _default_param(self, plan: AttackPlan) -> str:
+        """Pick the request parameter name for a probe."""
+        if plan.parameter_name:
+            return plan.parameter_name
+        if plan.vuln_class == VulnClass.XSS:
+            return "q"
+        if plan.vuln_class == VulnClass.TRAVERSAL:
+            return "file"
+        return "ip"
+
+    def _build_probe_command(self, plan: AttackPlan, payload: str) -> str:
         """Construct curl invocation for localhost microVM execution."""
-        endpoint = step.target_endpoint.lstrip("/")
+        endpoint = (plan.route or "/").lstrip("/")
         url = f"http://127.0.0.1:{self.port}/{endpoint}"
 
-        if step.http_method.upper() == "POST":
+        if plan.http_method.upper() == "POST":
             # For SQLi login or similar POST body
-            return f"curl -s -X POST '{url}' -d 'username={payload}&password=x'"
+            param = plan.parameter_name or "username"
+            return f"curl -s -X POST '{url}' -d '{param}={payload}&password=x'"
         else:
             # For GET parameters
-            param = "q" if step.vuln_class == VulnClass.REFLECTED_XSS else ("file" if step.vuln_class == VulnClass.PATH_TRAVERSAL else "ip")
+            param = self._default_param(plan)
             return f"curl -s -G '{url}' --data-urlencode '{param}={payload}'"
 
     def _verify_marker(
@@ -70,24 +80,24 @@ class ProbeHarness:
         """Dispatch to objective boolean marker checker."""
         if vuln_class == VulnClass.SQLI:
             return check_sqli_marker(response_text, expected_marker)
-        elif vuln_class == VulnClass.COMMAND_INJECTION:
+        elif vuln_class == VulnClass.CMDI:
             return check_cmdi_marker(response_text, expected_marker)
-        elif vuln_class == VulnClass.PATH_TRAVERSAL:
+        elif vuln_class == VulnClass.TRAVERSAL:
             return check_traversal_marker(response_text, expected_marker)
-        elif vuln_class == VulnClass.REFLECTED_XSS:
+        elif vuln_class == VulnClass.XSS:
             return check_xss_marker(response_text, payload)
         return False, None
 
     async def execute_step(
         self,
         sandbox: SandboxBase,
-        step: AttackStep,
+        plan: AttackPlan,
         app_cmd: str = "python app.py",
         target_dir: str = "/workspace",
-    ) -> EvidenceBlob:
-        """Execute attack step inside isolated sandbox microVM branch."""
-        payload = step.suggested_payloads[0] if step.suggested_payloads else "' OR 1=1--"
-        probe_cmd = self._build_probe_command(step, payload)
+    ) -> Evidence:
+        """Execute an attack plan inside an isolated sandbox microVM branch."""
+        payload = plan.suggested_payload or "' OR 1=1--"
+        probe_cmd = self._build_probe_command(plan, payload)
 
         tpl = Template(PROBE_CHAIN_SCRIPT)
         chained_script = tpl.render(
@@ -109,31 +119,26 @@ class ProbeHarness:
         response_body = match.group(1).strip() if match else res.stdout
 
         marker_found, observed = self._verify_marker(
-            step.vuln_class, response_body, payload, step.expected_marker
+            plan.vuln_class, response_body, payload, plan.expected_marker
         )
 
-        verdict = (
-            ProbeVerdict.CONFIRMED_EXPLOITABLE
-            if marker_found
-            else ProbeVerdict.NOT_EXPLOITABLE
-        )
+        verdict = ProbeVerdict.CONFIRMED if marker_found else ProbeVerdict.UNCONFIRMED
 
         # Truncate long response for evidence card readability
         excerpt = response_body[:500] if response_body else "No response recorded"
 
-        return EvidenceBlob(
-            step_id=step.step_id,
-            finding_id=step.finding_id,
+        return Evidence(
+            plan_id=plan.plan_id,
             payload=payload,
-            request=RequestMeta(
-                endpoint=step.target_endpoint,
-                method=step.http_method,
-            ),
+            request={
+                "endpoint": plan.route or "/",
+                "method": plan.http_method,
+            },
             response_status=200 if match else 500,
             response_excerpt=excerpt,
             verdict=verdict,
             marker_found=marker_found,
-            observed_marker=observed,
-            duration_ms=duration_ms,
-            raw_logs=res.stdout + ("\n" + res.stderr if res.stderr else ""),
+            target_marker=plan.expected_marker,
+            matched_text=observed,
+            execution_time_ms=duration_ms,
         )

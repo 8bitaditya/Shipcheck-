@@ -1,0 +1,391 @@
+# What ShipCheck does and how it works
+
+**In plain terms:** you give it a code change (a GitHub PR diff), and it tries to hack that code in a safe, throwaway environment. If an attack works, it proves it, fixes it, proves the fix works, and opens a draft PR for a human.
+
+**Example walkthrough** (AI wrote a login handler with a SQL injection bug):
+1. **Ingest:** it copies the changed files into a pre-built sandbox image that already has Python, Node, Semgrep, gitleaks, and the other scanners.
+2. **Triage:** cheap scanners run first (secrets, vulnerable dependencies, Semgrep rules) and flag suspicious spots.
+3. **Attack plan:** the big model (Ultra) reads the diff plus scan results and writes a plan: "login route, SQL sink, try `' OR 1=1--`, expect multiple users back."
+4. **Probes:** each planned attack runs in its own sandbox branch. The app starts, the attack is sent, and the result is captured in one run. If the marker appears (extra user rows, `uid=`, `root:`), the finding is **confirmed**.
+5. **Verdict:** a risk-ranked report with evidence and a 0-100 score. Unconfirmed findings score near 0.
+6. **Rectification:** covered below.
+
+## What the rectification CD loop does
+
+It is the "fix and prove" half. For each confirmed finding:
+1. The fix model gets the **exploit evidence** (payload plus what leaked), not just the code.
+2. It outputs the patch as structured diff hunks, and your code applies them mechanically.
+3. In a child sandbox branch it **re-runs the same attack**. The marker must be gone.
+4. It runs the repo's own tests. They must still pass.
+5. Both pass: push a `shipcheck/fix-...` branch and open a **draft PR** with PoC, root cause, diff, re-run result, and a reviewer checklist. Either fails: report "fix failed verification" honestly.
+6. It never merges. A human does that.
+
+Be careful with one assumption: the "repo's own tests pass" step only means something if the fixture has tests. A tiny demo Flask app probably has few or none, so plan to write 3-5 simple tests for it, otherwise that check is empty.
+
+---
+
+# How to approach the build
+
+**Build one thin slice first, then widen.** The best order is SQLi only, end to end: triage, plan, probe, verdict, fix, re-verify, PR. Then add command injection, traversal, and XSS, which reuse the same pipeline with different payloads and fix prompts. The plan's Week 1 milestone says the same thing.
+
+**Freeze the interfaces early.** Agree on the JSON shapes (attack plan, evidence blob, verdict, fix output) in Week 1. Then the three of you can work in parallel without blocking each other.
+
+**Protect the core loop.** If time gets tight, keep attack → verdict → fix → re-verify → PR and drop everything else (reachability analysis, real-repo extras, fancy dashboard).
+
+---
+
+# Legitimate shortcuts that don't hurt accuracy
+
+These save effort while keeping the verdicts objective:
+
+- **Develop against local Docker plus a mock LLM.** The plan already includes this fallback. Markers are the same, so correctness is unaffected. Use the real Token Factory Sandboxes for the final demo, since that's what the track rewards.
+- **Template the four exploit payloads.** The payloads are fixed strings, so use parameterized scripts per class instead of having an LLM write each PoC. That reduces flakiness and cost. Let the LLM do what it's actually good at: planning and fixing.
+- **Record and replay LLM responses.** Cache model outputs during development so repeated test runs cost no credits.
+- **Use Super and Nano for everyday calls, Ultra only for planning and hard fixes.** That is the plan's own rule.
+- **Start with Semgrep only in triage.** Add gitleaks, pip-audit, and osv-scanner afterward, since they're independent add-ons.
+- **Do simple reachability.** A single LLM call tracing a route to its sink is enough. Skip full taint analysis.
+- **Keep the dashboard to one lean page** with probe status, verdict, evidence, and PR link.
+- **Cut to 3 classes** (as the plan allows) if path traversal stays flaky. Say so honestly in the README.
+- **Replay mode is fine if you label it.** Judges seeing a recorded golden run is legitimate as long as the UI and video say it's a recorded run alongside the live option.
+
+**Things not to shortcut** (these are what make the project credible): never let an LLM's opinion confirm a finding, never skip the re-run after a fix, never call the merge endpoint, never commit keys, and never run exploits outside the sandbox.
+
+---
+
+# Paid or risky resources and free alternatives
+
+| Resource | Cost risk | Free or cheaper alternative |
+|---|---|---|
+| Nemotron on Token Factory | $50 total credits; Ultra is the pricey one | Mock/cached responses in dev; NVIDIA's hosted API at build.nvidia.com may offer free credits (verify, I'm not certain of current limits) |
+| Tavily search | 1,000 free credits/month plus $25 from the Builder Program | OSV.dev, NVD, and GitHub Advisory APIs are free and good for CVE data; keep Tavily for grounding and the prize |
+| Contree Sandboxes (beta) | pricing unknown | Local Docker for development and as an emergency fallback |
+| Nebius Serverless Endpoint | uses credits, cold starts | Fly.io/Render/Railway free tiers for testing; as a last resort, a static replay dashboard on GitHub Pages or Vercel |
+| Semgrep, gitleaks, osv-scanner, pip-audit | free, open source | none needed |
+| LangSmith tracing | credit offered, optional | Langfuse (open source) or just skip |
+| Video | free | OBS plus DaVinci Resolve |
+| GitHub, second reviewer account, YouTube | free | none needed |
+
+**Do on Day 1 morning:** claim the promo credits, do the Builder Program email opt-in (it needs a real email and takes hours), and run the PRD's §13 checks: Nemotron pricing, whether function-calling works, whether the sandbox has outbound network, and the real concurrency limit. These unknowns decide how much of the design holds.
+
+---
+
+# Realistic expectations
+
+Nineteen days for three people is tight, mainly because the sandbox SDK is beta and may behave differently from the docs. Three habits will do the most for you:
+- Merge daily and keep a written cut list.
+- Treat Days 2, 5, and 11 as the danger days and use their named fallbacks without guilt.
+- Aim to submit the day before you must. The plan's internal deadline of 9:30 PM IST on Oct 30 already builds in some margin.
+
+If you'd like, I can turn this into a role-by-role checklist for you and your two teammates, or a "Day 1 morning" task list so nothing blocks you.
+# Understanding ShipCheck from the ground up
+
+Your instinct is the right one. "I used X" is a weak answer. The strong answer is: **"X solved this specific problem, and without it this specific thing would break."** I'll use that format for every piece.
+
+First, a reassurance. **You are not training any ML model in this project.** Nobody builds Nemotron from scratch here. ShipCheck is *AI engineering*: a system that calls pretrained models over an API and combines them with ordinary deterministic tools. The skill you're building is orchestration, verification, and reliability, which is exactly what "agentic engineering" means and is very hireable.
+
+---
+
+## 1. The foundations (what each concept actually is)
+
+**LLM and inference.** An LLM is a pretrained text predictor. You send a prompt and get text back. *Inference* means using a trained model; *training* means creating it. **Nebius Token Factory** is a hosted inference service: you send an HTTP request, their GPUs run Nemotron, and you get the answer back. In your code the whole thing is one function call that sends text and receives text.
+
+**The model tiers.** Bigger models reason better but cost more and respond slower. So Ultra does the one hard job (planning with the full diff in view), Super handles routine generation, and Nano handles cheap chores like summarizing logs. Using one tier for everything would either burn your credits or give weak plans.
+
+**Sandbox.** An isolated, disposable computer where running dangerous code can't hurt anything real. A container shares the host's kernel; a microVM (what the docs describe) has its own kernel, which isolates more strongly. You need it because ShipCheck *runs real exploits*. Without a sandbox you'd be attacking code on your own laptop or server.
+
+**Checkpoint and branching.** Think "git for a whole machine." You set up a machine once (tools installed), freeze it as an *image*, and then start many independent runs from that same image. Each run is a branch. That gives you parallel attacks and a clean "after the fix" copy to re-test.
+
+**Sandbox SDK, and a correction to your question.** An SDK is a library that wraps someone's web API so you can call it as normal functions. **You don't build the sandbox SDK.** Nebius built `contree-sdk`. What your team builds is a **`SandboxClient` adapter**: a small wrapper class of your own that exposes methods like `run_in_branch()` and hides the SDK underneath. You need that layer because the SDK is beta and may change; if it does, you fix one file instead of your whole codebase. In an interview: "I wrapped a beta SDK behind an adapter so the rest of the system depends on my interface, not their API."
+
+**Static analysis tools** (they read code without running it):
+- **Semgrep** matches code patterns, like "user input flows into a SQL string." It finds *suspects*.
+- **gitleaks** looks for leaked secrets with pattern and randomness checks.
+- **pip-audit / npm audit / osv-scanner** compare your dependency versions against databases of known vulnerable versions.
+- **SARIF** is just the standard JSON format these tools output, so you can parse them all the same way.
+
+Their limit: they guess from code shape and have false positives. That limit is the reason the sandbox attack step exists.
+
+**Tavily.** A search API built for LLMs. It lets the planner pull current exploit writeups and lets the report attach real CVE and advisory IDs. Without it the model would rely on stale training memory and could invent CVE numbers.
+
+**asyncio and Semaphore.** Each probe mostly *waits* on the network. `asyncio.gather` runs many waits at once; `Semaphore(40)` caps it at 40 because the beta limit is 50 concurrent operations. Without gather, 10 probes take 10 times as long. Without the semaphore, you hit the cap and get errors.
+
+**FastAPI.** A Python web framework. It exposes `POST /scan` and serves the dashboard page. It's the front door; the actual work happens behind it.
+
+**GitHub REST API and a PAT.** A personal access token lets your code act as a GitHub user. It's how the bot pushes a branch and creates a draft PR. A fine-grained token limited to "Pull requests: write" means that even if the key leaks, it can't merge or delete things. That's a security talking point.
+
+**Docker and Nebius Serverless Endpoint.** Docker packages your app so it runs the same anywhere. The endpoint hosts that container at a public URL so judges can open it.
+
+---
+
+## 2. How the attack side works (what actually happens)
+
+I'll call it the **attack engine**, because neither document describes a literal CI product.
+
+1. **Ingest.** Take the PR's changed files and put them in the sandbox image. Output: an image ID.
+2. **Triage.** Run the scanners and collect findings as JSON.
+3. **Plan.** Ultra receives the diff plus findings and returns a JSON plan, for example:
+   `{vuln_class: "sqli", target_file: "app.py", sink: "login()", payload_strategy: "boolean bypass", expected_marker: "multiple rows"}`.
+4. **Probe.** For each plan item, one shell command chain runs inside a forked sandbox: start the app, wait until it's ready, send the payload, capture the response, stop. It has to be one chain because process memory doesn't survive between runs.
+5. **Verdict by marker.** Code checks a boolean: is `uid=` in the output? is `root:` in the response? **No LLM decides this.** LLMs hallucinate; a string match doesn't. This is the heart of the project.
+6. **Score and report.** Combine severity, confirmed exploit, reachability, and exposure into 0-100 with a sentence explaining each factor.
+
+Here's what the four bugs look like in code, because you should be able to write them from memory:
+
+```python
+# SQLi (vulnerable)  ->  payload  ' OR 1=1--
+db.execute(f"SELECT * FROM users WHERE name='{name}' AND pw='{pw}'")
+# fix: parameterized query
+db.execute("SELECT * FROM users WHERE name=? AND pw=?", (name, pw))
+
+# Command injection  ->  8.8.8.8; id
+os.system("ping -c 1 " + host)
+# fix: no shell + validate input
+subprocess.run(["ping", "-c", "1", host], shell=False)
+
+# Path traversal  ->  ../../etc/passwd
+open(os.path.join(BASE_DIR, filename))
+# fix: resolve, then check the prefix
+p = os.path.realpath(os.path.join(BASE_DIR, filename))
+if not p.startswith(os.path.realpath(BASE_DIR) + os.sep): abort(400)
+
+# Reflected XSS  ->  <script>alert(1)</script>
+return f"<h1>Results for {q}</h1>"
+# fix: html.escape(q)
+```
+
+**Why the LLM at all, if scanners and markers do so much?** Scanners can't reason about *how to exploit this particular code*. The LLM turns "suspicious line" into "a concrete payload and a success condition." It plans; the sandbox proves.
+
+---
+
+## 3. How rectification works (what you actually build)
+
+1. **Input to the fixer:** code plus the exploit evidence (payload, response excerpt). Evidence matters because code like `os.path.join(BASE, name)` looks clean to a model, but seeing `root:` in the response makes the bug obvious.
+2. **Output:** structured JSON like `{file, search, replace}`. Your code finds the exact `search` text and swaps it. If the text isn't found, the patch is **rejected**. This is safer than letting the model rewrite whole files, because it can't silently change unrelated code.
+3. **Re-verify in a child branch:** checkpoint the patched state, re-run the identical attack, and the marker must be gone.
+4. **Run the repo's tests.** This catches fixes that close the hole by breaking the feature (a common failure in the research the PRD cites).
+5. **Gate:** both pass, open a draft PR; otherwise report "fix failed verification." This is the "No PASS, No PR" rule.
+6. **Human merges.**
+
+**On naming:** in industry, CI/CD means a pipeline (GitHub Actions, Jenkins) that tests and ships changes automatically. ShipCheck's "gate" and "loop" borrow that idea, but the MVP isn't literally wired into a CI system. If asked, say "verification gate and rectification loop," then add: "a natural extension is triggering it from a GitHub Action on every PR." That's accurate and shows you understand the real terms.
+
+---
+
+## 4. The "what did it actually do" cheat sheet
+
+| Piece | What it did in ShipCheck | Without it |
+|---|---|---|
+| Nemotron Ultra | Read diff and findings, produced the attack plan | Attacks would be generic or missed |
+| Nemotron Super / Nano | Wrote PoC scripts and patches / compacted logs | Costs spike or logs flood context |
+| Token Factory | Hosted the models behind one API | You'd need your own GPUs |
+| Sandboxes | Ran real exploits safely, in parallel, with branching | Unsafe execution, no clean before/after |
+| `SandboxClient` adapter | Isolated the beta SDK | One SDK change breaks everything |
+| Semgrep/gitleaks/osv | Cheap first-pass suspects | LLM wastes tokens guessing |
+| Marker check | Objective yes/no confirmation | Hallucinated "vulnerabilities" |
+| Tavily | Real CVE and advisory grounding | Invented or outdated references |
+| asyncio + Semaphore | Parallel probes under the cap | Slow scans or rate-limit errors |
+| FastAPI | API and dashboard entry point | No way to trigger or view scans |
+| GitHub API + PAT | Pushed branch, opened draft PR | Fixes stay trapped in the sandbox |
+| Docker + Serverless | Public, reproducible demo | Judges can't run it |
+
+Note on React: the PRD specifies a single-page UI served by FastAPI, so you don't need React at all. A plain HTML page with a bit of JavaScript is enough, and that's one fewer thing to be unable to explain.
+
+---
+
+## 5. How to build it so you actually understand it
+
+**The rule: do every step by hand before automating it.** The whole project in miniature:
+
+1. **Day 1:** call an LLM API and make it return JSON; parse it with Python. (Learn: prompts, JSON extraction, retries.)
+2. Run a Docker container, execute commands in it, throw it away. (Learn: sandboxing, images.)
+3. Write a 20-line vulnerable Flask app. **Exploit it yourself with `curl`.** Watch the marker appear.
+4. Run Semgrep on it and read the output. Note what it caught and missed.
+5. Write the fix by hand, re-run your curl, and watch the marker vanish.
+6. Now ask: which of these steps can code do? That *is* ShipCheck.
+7. Then automate one step at a time, and after each one, deliberately break it (bad JSON, timeout, wrong port) and see what happens.
+
+**Keep a notebook with three lines per module:** what it does, what its input and output look like, and what happens if it fails. If you can fill those in without looking at code, you own it.
+
+**Using AI-written code is fine** if you can trace it. For each file the AI gives you, add print statements, run it, and then explain it aloud to a teammate. If you can't explain a function, rewrite it more simply until you can.
+
+---
+
+## 6. Other projects the same resources could build
+
+- **AI PR reviewer:** LLM plus GitHub API, comments on style and bugs.
+- **Bug reproducer:** reads a GitHub issue and writes a reproduction script, runs it in a sandbox.
+- **Self-fixing test bot:** generates tests, runs them, fixes failures.
+- **Dependency upgrade bot:** bumps versions, runs tests, opens a PR.
+- **README verifier:** follows setup instructions in a clean sandbox and reports where they fail.
+- **Secure-coding tutor:** students submit code, it attacks it and explains the bug.
+- **Data analysis agent:** runs LLM-written pandas code safely.
+- **ML flavor, if you want one:** train a small classifier on Semgrep findings to predict false positives. That adds actual model training to your resume.
+
+---
+
+## 7. Interview answers you should be able to give
+
+**"What does ShipCheck do?"** "It attacks AI-generated code in sandboxes, confirms vulnerabilities with objective markers, generates a fix, re-verifies it, and opens a draft PR for a human."
+
+**"Why not let the LLM judge if it's vulnerable?"** "LLMs hallucinate. A string match on `uid=` is a fact."
+
+**"How do you know the fix is correct?"** "I re-run the exact exploit and the repo's tests. If either fails, no PR. I'd also admit it's only as strong as the test suite."
+
+**"What if the LLM returns bad JSON?"** "JSON-in-prompt, extract the last JSON block, validate the schema, retry, and fall back to reading `reasoning_content`."
+
+**"What's the main limitation?"** "Four vulnerability classes, PR-diff only, and fix quality depends on the tests."
+
+**"What would you do next?"** "More classes, a GitHub Action trigger, and a trained false-positive filter."
+
+---
+
+## 8. Honest warnings
+
+Several facts in the documents are marked unverified by the authors themselves: sandbox network access, concurrency limits, pricing, and whether function-calling works. I can't check the Contree SDK details either, so verify those on Day 1 rather than trusting any summary, including mine.
+
+If you'd like, I can make this into a study document for you to keep, or build the "do it by hand" miniature (vulnerable Flask app, curl exploit, fix) so you can run it tonight.
+Here's a layout that follows the PRD's components and the build plan's ownership split. The `P1`/`P2`/`P3` tags show who owns each folder, so you rarely edit the same files.
+
+```
+shipcheck/
+├── README.md                    # P3: setup, model IDs, where TF/Nemotron/Tavily helped
+├── LICENSE                      # Apache-2.0 at top level (submission requirement)
+├── pyproject.toml               # package metadata + pytest config
+├── requirements.txt             # pinned versions (contree-sdk pinned!)
+├── .env.example                 # key NAMES only, never real values
+├── .gitignore                   # .env, reports/, __pycache__, .venv
+├── Dockerfile                   # P1: packages the FastAPI app for the Serverless Endpoint
+├── .vscode/
+│   ├── settings.json            # interpreter, pytest enabled
+│   └── launch.json              # F5 to debug the API and scripts
+├── .github/workflows/tests.yml  # runs unit tests on every push
+│
+├── src/shipcheck/
+│   ├── config.py                # loads env vars, model IDs, base URLs, Semaphore size
+│   │
+│   ├── contracts/               # P2: FROZEN in Week 1; everyone imports these
+│   │   ├── finding.py           # triage output {probe, target, verdict, evidence}
+│   │   ├── attack_plan.py       # {vuln_class, target_file, sink, payload_strategy, expected_marker}
+│   │   ├── evidence.py          # {payload, request, response_status, response_excerpt, verdict, marker_found}
+│   │   ├── fix.py               # diff-hunk JSON {file, search, replace}
+│   │   └── verdict.py           # per-finding card + 0-100 score
+│   │
+│   ├── llm/                     # P2: everything that talks to a model
+│   │   ├── nemotron_client.py   # one client: retries, tier presets, reasoning_content fallback
+│   │   ├── mock_llm.py          # offline fake for development (sandforge pattern)
+│   │   ├── json_extract.py      # pulls the last JSON block out of model text
+│   │   └── prompts/             # planner.md, poc_gen.md, fixer.md, summarizer.md
+│   │
+│   ├── sandbox/                 # P1: the only place that touches the SDK
+│   │   ├── base.py              # interface: run(), fork(), checkpoint(), artifacts()
+│   │   ├── client.py            # SandboxClient: semaphore(40), timeouts, polling
+│   │   ├── contree_backend.py   # real Token Factory Sandboxes (via contree-sdk)
+│   │   ├── local_docker_backend.py  # fallback if Contree breaks
+│   │   └── image/               # Dockerfile.probe + build_image.py (tools pre-baked)
+│   │
+│   ├── ingest/                  # P1: repo URL / PR diff -> sandbox image
+│   │   ├── github_ingest.py
+│   │   └── diff.py
+│   │
+│   ├── triage/                  # P1: cheap scanners first
+│   │   ├── runner.py            # runs them in order
+│   │   ├── gitleaks.py  deps.py  semgrep.py
+│   │   └── sarif.py             # SARIF -> your Finding objects
+│   │
+│   ├── planning/                # P2
+│   │   ├── planner.py           # Ultra: diff + findings -> attack plan
+│   │   └── tavily_client.py     # exploit writeups + CVE grounding
+│   │
+│   ├── probes/                  # P1 (+P2 for traversal/XSS): the attack engine
+│   │   ├── harness.py           # fork per finding, start app, attack, capture, timeout
+│   │   ├── markers.py           # the boolean checks: uid=, root:, extra rows, raw payload
+│   │   └── sqli.py  cmdi.py  traversal.py  xss.py
+│   │
+│   ├── scoring/                 # P2 (+P1 for reachability)
+│   │   ├── risk.py              # severity x confirmed x reachability x exposure
+│   │   └── reachability.py
+│   │
+│   ├── rectify/                 # P2: the rectification loop
+│   │   ├── fixer.py             # evidence -> diff-hunk JSON
+│   │   ├── patcher.py           # exact search/replace, rejects if text not found
+│   │   └── verifier.py          # re-run exploit in child branch + repo tests
+│   │
+│   ├── github/pr_bot.py         # P3: push branch, draft PR, dedupe, NEVER merge
+│   │
+│   ├── report/                  # P3
+│   │   ├── render.py            # JSON -> Markdown
+│   │   └── templates/           # report.md.j2, pr_body.md.j2
+│   │
+│   ├── pipeline/
+│   │   ├── orchestrator.py      # glues ingest -> triage -> plan -> probe -> score -> fix -> PR
+│   │   └── budget.py            # op-count and token guards
+│   │
+│   ├── replay/                  # P1: golden-run recorder + player for the public demo
+│   │   ├── recorder.py
+│   │   └── player.py
+│   │
+│   └── api/                     # P3: FastAPI + dashboard
+│       ├── main.py              # POST /scan, GET /scan/{id}, replay endpoints
+│       └── static/              # index.html, app.js, styles.css (no React needed)
+│
+├── fixtures/vulnshop/           # the forked demo target
+│   ├── app.py                   # SQLi, command injection, XSS + your traversal route
+│   ├── tests/                   # 3-5 simple tests, so "repo tests pass" means something
+│   └── requirements.txt
+│
+├── golden/run-<date>/           # frozen artifacts from the Day 12 golden run
+├── reports/                     # live scan outputs (gitignored)
+│
+├── scripts/
+│   ├── smoke_nemotron.py        # Day 1: JSON-in-prompt + reasoning_content test
+│   ├── smoke_contree.py         # Day 1: images().run(shell="echo ok")
+│   ├── smoke_tavily.py
+│   ├── run_scan.py              # CLI: scan the fixture without the dashboard
+│   └── deploy_endpoint.sh       # the nebius endpoint create command
+│
+├── tests/
+│   ├── test_markers.py  test_json_extract.py  test_patcher.py  test_risk.py
+│   └── e2e/test_vulnshop_sqli.py   # the Week 1 milestone as an automated test
+│
+└── docs/
+    ├── PRD.pdf  BUILD_PLAN.pdf
+    ├── architecture.md          # your own notes, written in your own words
+    ├── DAY1_VERIFICATION.md     # pass/fail for the PRD section 13 checks
+    └── notes/                   # the "what it does / input-output / failure" notebook
+```
+
+## Create it in one go
+
+From the folder where you want the project, in a terminal (Git Bash or WSL on Windows):
+
+```bash
+mkdir -p shipcheck && cd shipcheck
+mkdir -p .vscode .github/workflows config scripts golden reports docs/notes tests/e2e \
+  fixtures/vulnshop/tests \
+  src/shipcheck/{contracts,llm/prompts,sandbox/image,ingest,triage,planning,probes,scoring,rectify,github,report/templates,pipeline,replay,api/static}
+touch README.md LICENSE pyproject.toml requirements.txt .env.example .gitignore Dockerfile
+find src -type d -exec touch {}/__init__.py \;
+code .
+```
+
+## Why it's shaped this way
+
+- **`sandbox/base.py` with two backends** means all three of you can develop offline against the Docker backend, then switch to Contree with one config line. If the beta SDK breaks, only `contree_backend.py` changes.
+- **`contracts/` is the shared language.** Freeze it first, so the planner, probes, fixer, and dashboard can all be built in parallel without waiting on each other.
+- **`probes/markers.py` is separate from `probes/harness.py`** on purpose: markers are pure string checks you can unit-test in seconds, and they're the part that must never be wrong.
+- **`rectify/patcher.py` is small and strict** so a bad model output can't silently edit the wrong text.
+- **`golden/` and `replay/`** are what keep the public demo working even if the live call fails.
+
+## Order to create real code in
+
+1. `config.py`, `.env.example`, and `scripts/smoke_*.py` (Day 1).
+2. `contracts/`, `llm/nemotron_client.py`, `sandbox/` (Day 2).
+3. `triage/`, then `planning/` (Days 3-4).
+4. `probes/`, then `scoring/`, then `rectify/`, then `github/` (Days 5-8).
+5. `api/` and `replay/` (Days 9-11).
+
+## Two things to check
+
+- **Check the vulnshop license** before copying it into your public repo. I can't verify it from here. If it has no clear license, keep it as a separate fork and reference it rather than committing its code into yours.
+- **Don't create everything at once if it's overwhelming.** Empty folders teach nothing. Create each module when you reach its day, and write its three-line "what it does / input-output / failure" note in `docs/notes/` as you go.
+
+If you'd like, I can write the starter contents for `.env.example`, `.gitignore`, `.vscode/settings.json`, and the `contracts/` schemas next, since those unblock everyone on Day 1.

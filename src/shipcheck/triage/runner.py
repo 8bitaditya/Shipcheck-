@@ -49,7 +49,7 @@ class TriageRunner:
         sast = await self.semgrep.scan(sandbox)
         for f in sast:
             # If changed_files provided, scope to PR diff
-            if changed_files and f.file_path not in changed_files:
+            if changed_files and f.target.file not in changed_files:
                 continue
             fp = f.fingerprint()
             if fp not in seen_fingerprints:

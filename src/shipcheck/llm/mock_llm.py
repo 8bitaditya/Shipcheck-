@@ -23,53 +23,52 @@ class MockNemotronClient:
         if "attack plan" in lower_prompt or "planner" in lower_prompt:
             return json.dumps(
                 {
-                    "plan_id": "mock-plan-1",
-                    "commit_sha": "mock-sha",
-                    "summary": "Mock attack plan targeting 4 vulnerability classes",
-                    "steps": [
+                    "batch_id": "mock-batch-1",
+                    "diff_ref": "mock-sha",
+                    "plans": [
                         {
-                            "step_id": "step-sqli",
-                            "finding_id": "finding-sqli",
-                            "vuln_class": "SQLi",
+                            "vuln_class": "sqli",
                             "target_file": "app.py",
-                            "target_endpoint": "/login",
-                            "http_method": "POST",
+                            "sink": "db.execute()",
                             "payload_strategy": "Tautology authentication bypass",
                             "expected_marker": "admin@vulnshop.local",
-                            "suggested_payloads": ["admin' OR 1=1--"],
+                            "route": "/login",
+                            "http_method": "POST",
+                            "parameter_name": "username",
+                            "suggested_payload": "admin' OR 1=1--",
                         },
                         {
-                            "step_id": "step-cmdi",
-                            "finding_id": "finding-cmdi",
-                            "vuln_class": "Command Injection",
+                            "vuln_class": "cmdi",
                             "target_file": "app.py",
-                            "target_endpoint": "/export",
-                            "http_method": "GET",
+                            "sink": "os.system()",
                             "payload_strategy": "Command separator injection",
                             "expected_marker": "uid=",
-                            "suggested_payloads": ["8.8.8.8; id"],
+                            "route": "/export",
+                            "http_method": "GET",
+                            "parameter_name": "ip",
+                            "suggested_payload": "8.8.8.8; id",
                         },
                         {
-                            "step_id": "step-traversal",
-                            "finding_id": "finding-traversal",
-                            "vuln_class": "Path Traversal",
+                            "vuln_class": "traversal",
                             "target_file": "app.py",
-                            "target_endpoint": "/download",
-                            "http_method": "GET",
+                            "sink": "open()",
                             "payload_strategy": "Directory traversal sequence",
                             "expected_marker": "root:",
-                            "suggested_payloads": ["../../etc/passwd"],
+                            "route": "/download",
+                            "http_method": "GET",
+                            "parameter_name": "file",
+                            "suggested_payload": "../../etc/passwd",
                         },
                         {
-                            "step_id": "step-xss",
-                            "finding_id": "finding-xss",
-                            "vuln_class": "Reflected XSS",
+                            "vuln_class": "xss",
                             "target_file": "app.py",
-                            "target_endpoint": "/search",
-                            "http_method": "GET",
+                            "sink": "render_template_string()",
                             "payload_strategy": "Script tag reflection",
                             "expected_marker": "<script>alert(1)</script>",
-                            "suggested_payloads": ["<script>alert(1)</script>"],
+                            "route": "/search",
+                            "http_method": "GET",
+                            "parameter_name": "q",
+                            "suggested_payload": "<script>alert(1)</script>",
                         },
                     ],
                 }
@@ -80,12 +79,13 @@ class MockNemotronClient:
                 {
                     "hunks": [
                         {
-                            "file_path": "app.py",
-                            "search_block": "query = f\"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'\"",
-                            "replace_block": "query = \"SELECT * FROM users WHERE username = ? AND password = ?\"\n    cursor.execute(query, (username, password))",
-                            "rationale": "Parameterized SQLite query eliminates SQL injection",
+                            "file": "app.py",
+                            "search": "query = f\"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'\"",
+                            "replace": "query = \"SELECT * FROM users WHERE username = ? AND password = ?\"\n    cursor.execute(query, (username, password))",
                         }
-                    ]
+                    ],
+                    "root_cause": "Unparameterized SQL string interpolation",
+                    "explanation": "Parameterized SQLite query eliminates SQL injection",
                 }
             )
 

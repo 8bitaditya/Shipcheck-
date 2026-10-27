@@ -11,7 +11,7 @@ class ReachabilityAnalyzer:
     def analyze(finding: Finding, route_endpoints: Optional[List[str]] = None) -> float:
         """Return reachability score between 0.1 (internal/unreachable) and 1.0 (directly exposed on public route)."""
         # If finding occurs directly in a route handler file (e.g. app.py, routes.py, views.py)
-        lower_file = finding.file_path.lower()
+        lower_file = finding.target.file.lower()
         if any(name in lower_file for name in ["app.py", "route", "view", "controller", "api", "handler", "server.js"]):
             return 1.0
 

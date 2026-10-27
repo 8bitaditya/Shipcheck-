@@ -2,7 +2,9 @@
 
 import json
 from typing import List
-from shipcheck.contracts.finding import Finding
+from shipcheck.contracts.attack_plan import VulnClass
+from shipcheck.contracts.finding import Finding, FindingTarget
+from shipcheck.contracts.verdict import SeverityLevel
 from shipcheck.sandbox.base import SandboxBase
 from shipcheck.triage.sarif import parse_sarif_to_findings
 
@@ -25,12 +27,15 @@ class DependencyScanner:
                     desc = v.get("description", "Vulnerable package")
                     findings.append(
                         Finding(
-                            id=f"pip-audit:{cve_id}",
+                            finding_id=f"pip-audit:{cve_id}",
                             tool="pip-audit",
                             rule_id=cve_id,
-                            file_path="requirements.txt",
-                            line_start=1,
-                            message=f"{vuln.get('name')} {vuln.get('version')}: {desc}",
+                            vuln_class=VulnClass.DEPS,
+                            title=f"{vuln.get('name')} {vuln.get('version')}: {desc}",
+                            description=desc,
+                            target=FindingTarget(file="requirements.txt", line=1),
+                            severity=SeverityLevel.HIGH,
+                            cve_id=cve_id,
                         )
                     )
         except Exception:

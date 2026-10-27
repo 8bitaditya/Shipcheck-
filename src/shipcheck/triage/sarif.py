@@ -1,39 +1,49 @@
 """SARIF parser converting standard SARIF v2.1.0 into ShipCheck Finding objects."""
 
 import hashlib
-import json
 from typing import Any, Dict, List
-from shipcheck.contracts.finding import Finding, FindingSeverity, VulnClass
+
+from shipcheck.contracts.attack_plan import VulnClass
+from shipcheck.contracts.finding import Finding, FindingTarget
+from shipcheck.contracts.verdict import SeverityLevel
 
 
 def _map_vuln_class(rule_id: str, message: str) -> VulnClass:
-    """Classify a finding into one of the 4 targeted classes or other."""
+    """Classify a finding into one of the targeted classes or other."""
     text = f"{rule_id} {message}".lower()
     if any(k in text for k in ["sqli", "sql-injection", "sqlite", "raw-sql"]):
         return VulnClass.SQLI
     if any(k in text for k in ["command-injection", "shell-true", "subprocess", "exec", "system"]):
-        return VulnClass.COMMAND_INJECTION
+        return VulnClass.CMDI
     if any(k in text for k in ["path-traversal", "directory-traversal", "traversal", "send-file"]):
-        return VulnClass.PATH_TRAVERSAL
+        return VulnClass.TRAVERSAL
     if any(k in text for k in ["xss", "cross-site", "unescaped", "reflected"]):
-        return VulnClass.REFLECTED_XSS
+        return VulnClass.XSS
+    if any(k in text for k in ["ssrf", "server-side-request"]):
+        return VulnClass.SSRF
+    if any(k in text for k in ["ssti", "template-injection"]):
+        return VulnClass.SSTI
+    if any(k in text for k in ["idor", "object-level-authorization", "bola"]):
+        return VulnClass.IDOR
+    if any(k in text for k in ["deserialization", "pickle", "unsafe-yaml"]):
+        return VulnClass.DESERIALIZATION
     if any(k in text for k in ["secret", "token", "password", "key", "gitleaks"]):
-        return VulnClass.SECRET_LEAK
+        return VulnClass.SECRETS
     if any(k in text for k in ["cve-", "vulnerable-dependency", "audit"]):
-        return VulnClass.INSECURE_DEPENDENCY
+        return VulnClass.DEPS
     return VulnClass.OTHER
 
 
-def _map_severity(level: str) -> FindingSeverity:
-    """Map SARIF level to FindingSeverity."""
+def _map_severity(level: str) -> SeverityLevel:
+    """Map SARIF level to SeverityLevel."""
     lvl = (level or "").lower()
     if lvl in ["error", "critical"]:
-        return FindingSeverity.CRITICAL
+        return SeverityLevel.CRITICAL
     if lvl == "warning":
-        return FindingSeverity.HIGH
+        return SeverityLevel.HIGH
     if lvl == "note":
-        return FindingSeverity.MEDIUM
-    return FindingSeverity.LOW
+        return SeverityLevel.MEDIUM
+    return SeverityLevel.LOW
 
 
 def parse_sarif_to_findings(sarif_data: Dict[str, Any], tool_name: str) -> List[Finding]:
@@ -72,17 +82,20 @@ def parse_sarif_to_findings(sarif_data: Dict[str, Any], tool_name: str) -> List[
 
             findings.append(
                 Finding(
-                    id=finding_id,
+                    finding_id=finding_id,
                     tool=tool_name,
                     vuln_class=_map_vuln_class(rule_id, message),
                     rule_id=rule_id,
-                    file_path=file_path,
-                    line_start=line_start,
-                    line_end=line_end,
-                    severity_hint=_map_severity(level),
-                    message=message,
-                    sink_snippet=snippet,
-                    raw_sarif=res,
+                    title=message or rule_id,
+                    description=message,
+                    target=FindingTarget(
+                        file=file_path,
+                        line=line_start,
+                        end_line=line_end,
+                        sink=snippet,
+                        code_snippet=snippet,
+                    ),
+                    severity=_map_severity(level),
                 )
             )
 
