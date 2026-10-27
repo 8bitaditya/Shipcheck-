@@ -35,3 +35,7 @@ jobs:
     - name: Run sandbox tests (local backend)
       run: |
         pytest tests/test_sandbox.py -v
+
+    - name: Run rectification tests (FR-6)
+      run: |
+        pytest tests/test_rectify.py -v

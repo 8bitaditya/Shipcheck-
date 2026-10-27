@@ -5,7 +5,7 @@
 
 Built for the **Nebius x NVIDIA Global AI Hackathon** (Coding and Agentic Engineering Track).
 
-> **Status (2026-10-27, `draft` branch):** the data contracts and the individual pipeline stages (triage, planning, probing, scoring, sandboxes, LLM client) are built and tested. The end-to-end orchestrator, the fix engine, the PR bot and the dashboard are **not built yet**. See [Current status](#-current-status) before running anything.
+> **Status (2026-10-27, `draft` branch):** the data contracts, the individual pipeline stages (triage, planning, probing, scoring, sandboxes, LLM client) and the fix/re-verify engine (FR-6) are built and tested. The end-to-end orchestrator, the PR bot and the dashboard are **not built yet**. See [Current status](#-current-status) before running anything.
 
 ---
 
@@ -96,8 +96,8 @@ What is in the `draft` branch today, and what still needs building.
 | Sandboxes | `sandbox/` | ✅ Built. ConTree backend + local fallback. 9 tests |
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
 | Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
-| **End-to-end orchestrator** | — | ❌ Not built: nothing yet chains ingest → triage → plan → probe → verdict |
-| **Fix engine / patcher** | — | ❌ Not built. `DiffHunk.apply_to_text` and the `fixer.md` prompt exist, but no module calls them |
+| Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. 6 tests |
+| **End-to-end orchestrator** | — | ❌ Not built: nothing yet chains ingest → triage → plan → probe → verdict → rectify |
 | **PR bot** | — | ❌ Not built |
 | **API + dashboard** | `shipcheck.api.main` | ❌ Not built |
 | **Demo fixture + golden-run replay** | `fixtures/`, `golden/` | ❌ Not built |
@@ -107,7 +107,7 @@ What is in the `draft` branch today, and what still needs building.
 ### Docker and CI (interim setup)
 
 - **`Dockerfile`** builds the package and, by default, runs the test suite. When `shipcheck.api.main` exists, switch the `CMD` back to `uvicorn` (the line is commented in the file) and re-add `COPY` lines for `fixtures/` and `golden/` once those exist.
-- **`.github/workflows/tests.yml`** runs `tests/test_contracts.py` and `tests/test_sandbox.py` on Python 3.11 and 3.12. It only triggers on pushes and PRs to `main`, so it won't run on `draft` until `draft` is merged or a PR into `main` is opened. Add new test files to the workflow as they're written.
+- **`.github/workflows/tests.yml`** runs `tests/test_contracts.py`, `tests/test_sandbox.py` and `tests/test_rectify.py` on Python 3.11 and 3.12. It only triggers on pushes and PRs to `main`, so it won't run on `draft` until `draft` is merged or a PR into `main` is opened. Add new test files to the workflow as they're written.
 
 ---
 
@@ -132,7 +132,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **35 passed** (26 contract tests + 9 sandbox tests). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **41 passed** (26 contract + 9 sandbox + 6 rectification tests). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
 
 ### 3. Configure (optional)
 
@@ -246,11 +246,13 @@ Shipcheck-/
 │   ├── planning/                 # AttackPlanner (Nemotron Ultra) + Tavily client
 │   ├── probes/                   # probe harness, deterministic markers, per-class probes
 │   ├── scoring/                  # reachability heuristic
+│   ├── rectify/                  # FR-6 fix engine: generate → apply → re-verify
 │   ├── sandbox/                  # SandboxClient, ConTree + local backends, probe image
 │   └── llm/                      # Nemotron client, mock LLM, JSON extraction, prompts/
 ├── tests/
 │   ├── test_contracts.py         # 26 tests
-│   └── test_sandbox.py           # 9 tests
+│   ├── test_sandbox.py           # 9 tests
+│   └── test_rectify.py           # 6 tests (FR-6 fix loop)
 ├── docs/
 │   ├── PRD.pdf, BUILD_PLAN.pdf   # product requirements + day-by-day plan
 │   ├── contracts_design_decisions.md
@@ -259,7 +261,7 @@ Shipcheck-/
 ├── CONTRACTS_DECISIONS.md        # architectural decision records
 ├── PRoject.txt                   # build notes
 ├── Dockerfile                    # builds the package; runs tests until the API exists
-├── .github/workflows/tests.yml   # CI: contract + sandbox tests on 3.11 / 3.12
+├── .github/workflows/tests.yml   # CI: contract + sandbox + rectify tests on 3.11 / 3.12
 ├── requirements.txt, pyproject.toml, .env.example
 └── LICENSE
 ```
@@ -268,12 +270,13 @@ Shipcheck-/
 
 ## 🧭 Next Steps
 
-1. **Orchestrator:** one entry point that runs ingest → triage → plan → probe (in parallel, capped at `MAX_CONCURRENT_OPS`) → verdict, and returns `Finding`s with `probe`, `evidence` and `verdict` filled in.
-2. **Fix engine:** call Nemotron Super with `fixer.md`, parse the result into a `FixPatch`, apply it with `DiffHunk.apply_to_text`, re-run the same probe in a child sandbox (it must fail), then run the repo's tests.
-3. **PR bot:** open a draft PR containing the evidence and `VerdictCard` summaries.
-4. **API + dashboard:** FastAPI app at `shipcheck.api.main` with `POST /scan`.
-5. **Demo fixture + golden-run replay**, then point the `Dockerfile` at the API and add the new paths and tests to it and to CI.
-6. Tests for triage, planner, harness and markers.
+1. **Orchestrator:** one entry point that runs ingest → triage → plan → probe (in parallel, capped at `MAX_CONCURRENT_OPS`) → verdict → rectify, and returns `Finding`s with `probe`, `evidence`, `verdict` and `fix` filled in.
+2. **PR bot (FR-7):** push a `shipcheck/fix-*` branch and open a draft PR (never auto-merge) containing the evidence and `VerdictCard` summaries, only when the fix is `VERIFIED_PASSED`.
+3. **API + dashboard (FR-8):** FastAPI app at `shipcheck.api.main` with `POST /scan`.
+4. **Demo fixture + golden-run replay**, then point the `Dockerfile` at the API and add the new paths and tests to it and to CI.
+5. Tests for triage, planner, harness and markers.
+
+> **Done:** ✅ Fix engine (FR-6) — `rectify/fixer.py` generates a fix from the exploit evidence, applies it via search/replace, and re-verifies it in a forked child sandbox (marker gone + repo tests pass).
 
 ---
 
