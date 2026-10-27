@@ -104,10 +104,10 @@ What is in the `draft` branch today, and what still needs building.
 
 **Vulnerability classes:** the contracts define 10 (`sqli`, `cmdi`, `traversal`, `xss`, `ssrf`, `ssti`, `idor`, `deserialization`, `secrets`, `deps`, plus `other`). The probe harness can currently execute **4** of them (SQLi, CMDi, traversal, XSS). The other classes have templates in `CANONICAL_ATTACK_TEMPLATES` but no probe yet.
 
-### Known broken references (fix before shipping)
+### Docker and CI (interim setup)
 
-- **`Dockerfile`** copies `fixtures/` and `golden/` and starts `shipcheck.api.main:app`. None of these exist yet, so `docker build` fails.
-- **`.github/workflows/tests.yml`** runs `tests/test_markers.py`, `test_json_extract.py`, `test_patcher.py`, `test_risk.py` and `tests/e2e/test_vulnshop_sqli.py`. None of these exist yet, and the workflow only triggers on `main`. Until it's updated, CI will fail once `draft` is merged into `main`.
+- **`Dockerfile`** builds the package and, by default, runs the test suite. When `shipcheck.api.main` exists, switch the `CMD` back to `uvicorn` (the line is commented in the file) and re-add `COPY` lines for `fixtures/` and `golden/` once those exist.
+- **`.github/workflows/tests.yml`** runs `tests/test_contracts.py` and `tests/test_sandbox.py` on Python 3.11 and 3.12. It only triggers on pushes and PRs to `main`, so it won't run on `draft` until `draft` is merged or a PR into `main` is opened. Add new test files to the workflow as they're written.
 
 ---
 
@@ -258,8 +258,8 @@ Shipcheck-/
 ├── ProjectExplain.md             # plain-language walkthrough of the whole system
 ├── CONTRACTS_DECISIONS.md        # architectural decision records
 ├── PRoject.txt                   # build notes
-├── Dockerfile                    # ⚠ references paths that don't exist yet
-├── .github/workflows/tests.yml   # ⚠ references tests that don't exist yet
+├── Dockerfile                    # builds the package; runs tests until the API exists
+├── .github/workflows/tests.yml   # CI: contract + sandbox tests on 3.11 / 3.12
 ├── requirements.txt, pyproject.toml, .env.example
 └── LICENSE
 ```
@@ -272,7 +272,7 @@ Shipcheck-/
 2. **Fix engine:** call Nemotron Super with `fixer.md`, parse the result into a `FixPatch`, apply it with `DiffHunk.apply_to_text`, re-run the same probe in a child sandbox (it must fail), then run the repo's tests.
 3. **PR bot:** open a draft PR containing the evidence and `VerdictCard` summaries.
 4. **API + dashboard:** FastAPI app at `shipcheck.api.main` with `POST /scan`.
-5. **Demo fixture + golden-run replay**, then fix the `Dockerfile` and CI workflow so they point at real paths and tests.
+5. **Demo fixture + golden-run replay**, then point the `Dockerfile` at the API and add the new paths and tests to it and to CI.
 6. Tests for triage, planner, harness and markers.
 
 ---

@@ -28,10 +28,10 @@ jobs:
         pip install -r requirements.txt
         pip install -e .
 
-    - name: Run unit & marker tests
+    - name: Run contract tests
       run: |
-        pytest tests/test_markers.py tests/test_json_extract.py tests/test_patcher.py tests/test_risk.py -v
+        pytest tests/test_contracts.py -v
 
-    - name: Run e2e fixture test (offline mock / local sandbox)
+    - name: Run sandbox tests (local backend)
       run: |
-        pytest tests/e2e/test_vulnshop_sqli.py -v
+        pytest tests/test_sandbox.py -v

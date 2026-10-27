@@ -12,19 +12,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code and fixtures
+# Copy application source code and tests
+# (pyproject.toml declares README.md as the package readme, so it must be present)
+COPY pyproject.toml README.md ./
 COPY src/ /app/src/
-COPY fixtures/ /app/fixtures/
-COPY golden/ /app/golden/
-COPY pyproject.toml .
+COPY tests/ /app/tests/
 
 # Install package in editable mode
 RUN pip install --no-cache-dir -e .
 
-EXPOSE 8000
-
 ENV PYTHONUNBUFFERED=1
-ENV HOST=0.0.0.0
-ENV PORT=8000
 
-CMD ["uvicorn", "shipcheck.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# No API exists yet, so the default command runs the test suite.
+# Once shipcheck.api.main is built, switch to:
+#   EXPOSE 8000
+#   CMD ["uvicorn", "shipcheck.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "pytest", "-q"]
