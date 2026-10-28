@@ -1,0 +1,2 @@
+# vulnshop's own runtime dependency (the target app, not ShipCheck itself)
+flask>=3.0,<4.0

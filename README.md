@@ -5,7 +5,7 @@
 
 Built for the **Nebius x NVIDIA Global AI Hackathon** (Coding and Agentic Engineering Track).
 
-> **Status (2026-10-27, `draft` branch):** the data contracts, the individual pipeline stages (triage, planning, probing, scoring, sandboxes, LLM client) and the fix/re-verify engine (FR-6) are built and tested. The end-to-end orchestrator, the PR bot and the dashboard are **not built yet**. See [Current status](#-current-status) before running anything.
+> **Status (2026-10-28, `draft` branch):** the data contracts, every pipeline stage (triage, planning, probing, scoring, sandboxes, LLM client), the fix/re-verify engine (FR-6) and the end-to-end orchestrator are built and tested, and the `vulnshop` demo fixture is exploited live by the real probe harness. The PR bot, the dashboard and the golden-run replay are **not built yet**. See [Current status](#-current-status) before running anything.
 
 ---
 
@@ -97,17 +97,18 @@ What is in the `draft` branch today, and what still needs building.
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
 | Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
 | Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. 6 tests |
-| **End-to-end orchestrator** | — | ❌ Not built: nothing yet chains ingest → triage → plan → probe → verdict → rectify |
+| End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → rectify, probes fan out one forked sandbox per plan behind a semaphore, returns a `ScanResult`. 4 tests |
+| Demo fixture | `fixtures/vulnshop/` | ✅ Built. A Flask app with one real bug per class (SQLi, CMDi, traversal, XSS); the probe harness exploits it live (see the live test) |
+| **Golden-run replay** | `golden/` | ❌ Not built |
 | **PR bot** | — | ❌ Not built |
 | **API + dashboard** | `shipcheck.api.main` | ❌ Not built |
-| **Demo fixture + golden-run replay** | `fixtures/`, `golden/` | ❌ Not built |
 
-**Vulnerability classes:** the contracts define 10 (`sqli`, `cmdi`, `traversal`, `xss`, `ssrf`, `ssti`, `idor`, `deserialization`, `secrets`, `deps`, plus `other`). The probe harness can currently execute **4** of them (SQLi, CMDi, traversal, XSS). The other classes have templates in `CANONICAL_ATTACK_TEMPLATES` but no probe yet.
+**Vulnerability classes:** the contracts define 10 (`sqli`, `cmdi`, `traversal`, `xss`, `ssrf`, `ssti`, `idor`, `deserialization`, `secrets`, `deps`, plus `other`). The probe harness can currently execute **4** of them (SQLi, CMDi, traversal, XSS) — the same four `vulnshop` demonstrates. The other classes have templates in `CANONICAL_ATTACK_TEMPLATES` but no probe yet.
 
 ### Docker and CI (interim setup)
 
 - **`Dockerfile`** builds the package and, by default, runs the test suite. When `shipcheck.api.main` exists, switch the `CMD` back to `uvicorn` (the line is commented in the file) and re-add `COPY` lines for `fixtures/` and `golden/` once those exist.
-- **`.github/workflows/tests.yml`** runs `tests/test_contracts.py`, `tests/test_sandbox.py` and `tests/test_rectify.py` on Python 3.11 and 3.12. It only triggers on pushes and PRs to `main`, so it won't run on `draft` until `draft` is merged or a PR into `main` is opened. Add new test files to the workflow as they're written.
+- **`.github/workflows/tests.yml`** runs the contract, sandbox, rectification and orchestrator test files on Python 3.11 and 3.12 (the opt-in live tests are not run in CI). It only triggers on pushes and PRs to `main`, so it won't run on `draft` until `draft` is merged or a PR into `main` is opened. Add new test files to the workflow as they're written.
 
 ---
 
@@ -132,7 +133,18 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **41 passed** (26 contract + 9 sandbox + 6 rectification tests). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **45 passed, 3 skipped** (26 contract + 9 sandbox + 6 rectification + 4 orchestrator tests; the 3 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+
+### Run the live exploit demo
+
+The deterministic suite uses stubs. To watch the real harness exploit the real `vulnshop` app:
+
+```bash
+pip install 'flask>=3.0,<4.0'
+SHIPCHECK_LIVE=1 pytest tests/test_vulnshop_live.py -v
+```
+
+This starts `vulnshop` in a local sandbox and fires live XSS, command-injection and path-traversal exploits, asserting each marker appears in the real HTTP response.
 
 ### 3. Configure (optional)
 
@@ -248,11 +260,15 @@ Shipcheck-/
 │   ├── scoring/                  # reachability heuristic
 │   ├── rectify/                  # FR-6 fix engine: generate → apply → re-verify
 │   ├── sandbox/                  # SandboxClient, ConTree + local backends, probe image
-│   └── llm/                      # Nemotron client, mock LLM, JSON extraction, prompts/
+│   ├── llm/                      # Nemotron client, mock LLM, JSON extraction, prompts/
+│   └── orchestrator.py           # ShipCheckScanner.scan() — chains the whole pipeline
+├── fixtures/vulnshop/            # intentionally vulnerable Flask demo app (4 classes)
 ├── tests/
 │   ├── test_contracts.py         # 26 tests
 │   ├── test_sandbox.py           # 9 tests
-│   └── test_rectify.py           # 6 tests (FR-6 fix loop)
+│   ├── test_rectify.py           # 6 tests (FR-6 fix loop)
+│   ├── test_orchestrator.py      # 4 tests (end-to-end chaining)
+│   └── test_vulnshop_live.py     # 3 live exploit tests (opt-in: SHIPCHECK_LIVE=1)
 ├── docs/
 │   ├── PRD.pdf, BUILD_PLAN.pdf   # product requirements + day-by-day plan
 │   ├── contracts_design_decisions.md
@@ -270,13 +286,13 @@ Shipcheck-/
 
 ## 🧭 Next Steps
 
-1. **Orchestrator:** one entry point that runs ingest → triage → plan → probe (in parallel, capped at `MAX_CONCURRENT_OPS`) → verdict → rectify, and returns `Finding`s with `probe`, `evidence`, `verdict` and `fix` filled in.
-2. **PR bot (FR-7):** push a `shipcheck/fix-*` branch and open a draft PR (never auto-merge) containing the evidence and `VerdictCard` summaries, only when the fix is `VERIFIED_PASSED`.
-3. **API + dashboard (FR-8):** FastAPI app at `shipcheck.api.main` with `POST /scan`.
-4. **Demo fixture + golden-run replay**, then point the `Dockerfile` at the API and add the new paths and tests to it and to CI.
-5. Tests for triage, planner, harness and markers.
+1. **PR bot (FR-7):** push a `shipcheck/fix-*` branch and open a draft PR (never auto-merge) containing the evidence and `VerdictCard` summaries, only when the fix is `VERIFIED_PASSED`.
+2. **API + dashboard (FR-8):** FastAPI app at `shipcheck.api.main` with `POST /scan` and the verdict/evidence views.
+3. **Golden-run replay:** record a full scan's evidence under `golden/` so the demo never depends on a live model/sandbox; then point the `Dockerfile` at the API.
+4. **Real end-to-end run:** wire the live Nemotron client + a real scanner so `ShipCheckScanner.scan()` runs against `vulnshop` with no stubs.
+5. Tests for triage, planner and markers.
 
-> **Done:** ✅ Fix engine (FR-6) — `rectify/fixer.py` generates a fix from the exploit evidence, applies it via search/replace, and re-verifies it in a forked child sandbox (marker gone + repo tests pass).
+> **Done:** ✅ FR-6 fix engine, ✅ the scan orchestrator, and ✅ the `vulnshop` demo fixture (exploited live by the real harness — XSS, CMDi and traversal markers all fire).
 
 ---
 
