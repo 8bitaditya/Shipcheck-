@@ -120,12 +120,22 @@ def _plan(vuln: VulnClass, file: str, route: str, marker: str) -> AttackPlan:
     )
 
 
-def _scanner(findings, plans, *, marker_found, rectifier) -> ShipCheckScanner:
+class StubPRBot:
+    def __init__(self):
+        self.calls = []
+
+    async def open_draft_pr(self, finding, *, base="main"):
+        self.calls.append(finding.finding_id)
+        return {"number": 42, "html_url": "https://github.com/o/r/pull/42"}
+
+
+def _scanner(findings, plans, *, marker_found, rectifier, pr_bot=None) -> ShipCheckScanner:
     return ShipCheckScanner(
         triage=StubTriage(findings),
         planner=StubPlanner(AttackPlanBatch(plans=plans)),
         harness=StubHarness(marker_found=marker_found),
         rectifier=rectifier,
+        pr_bot=pr_bot,
     )
 
 
@@ -203,3 +213,48 @@ async def test_rectify_can_be_disabled():
     assert rect.calls == 0
     assert result.fixed_count == 0
     assert result.findings[0].fix is None
+
+
+async def test_open_prs_opens_a_draft_for_verified_fix():
+    finding = _finding(VulnClass.SQLI, "app.py", "/login")
+    plan = _plan(VulnClass.SQLI, "app.py", "/login", "admin")
+    bot = StubPRBot()
+    scanner = _scanner(
+        [finding], [plan], marker_found=True, rectifier=StubRectifier(verified=True), pr_bot=bot
+    )
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"}, open_prs=True)
+
+    assert bot.calls == [finding.finding_id]
+    assert result.pull_requests == [
+        {"finding_id": finding.finding_id, "number": 42, "url": "https://github.com/o/r/pull/42"}
+    ]
+
+
+async def test_prs_not_opened_by_default():
+    finding = _finding(VulnClass.SQLI, "app.py", "/login")
+    plan = _plan(VulnClass.SQLI, "app.py", "/login", "admin")
+    bot = StubPRBot()
+    scanner = _scanner(
+        [finding], [plan], marker_found=True, rectifier=StubRectifier(verified=True), pr_bot=bot
+    )
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"})
+
+    assert bot.calls == []  # open_prs defaults to False
+    assert result.pull_requests == []
+
+
+async def test_open_prs_skips_unverified_fix():
+    finding = _finding(VulnClass.SQLI, "app.py", "/login")
+    plan = _plan(VulnClass.SQLI, "app.py", "/login", "admin")
+    bot = StubPRBot()
+    scanner = _scanner(
+        [finding], [plan], marker_found=True, rectifier=StubRectifier(verified=False), pr_bot=bot
+    )
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"}, open_prs=True)
+
+    assert bot.calls == []  # fix failed the gate -> no PR
+    assert result.pull_requests == []
+    assert result.fixed_count == 0

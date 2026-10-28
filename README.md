@@ -97,7 +97,7 @@ What is in the `draft` branch today, and what still needs building.
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
 | Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
 | Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. 6 tests |
-| End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → rectify, probes fan out one forked sandbox per plan behind a semaphore, returns a `ScanResult`. 4 tests |
+| End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → rectify, probes fan out one forked sandbox per plan behind a semaphore, and (opt-in `open_prs=True`) opens a draft PR per verified fix. Returns a `ScanResult`. 7 tests |
 | Demo fixture | `fixtures/vulnshop/` | ✅ Built. A Flask app with one real bug per class (SQLi, CMDi, traversal, XSS); the probe harness exploits it live (see the live test) |
 | PR bot (FR-7) | `pr/github_bot.py` | ✅ Built. Opens a **draft** PR with an evidence body on a `shipcheck/fix-*` branch, only for a `VERIFIED_PASSED` fix, dedupes by head ref, never merges. 5 tests |
 | **Golden-run replay** | `golden/` | ❌ Not built |
@@ -133,7 +133,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **50 passed, 3 skipped** (26 contract + 9 sandbox + 6 rectification + 4 orchestrator + 5 PR-bot tests; the 3 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **53 passed, 3 skipped** (26 contract + 9 sandbox + 6 rectification + 7 orchestrator + 5 PR-bot tests; the 3 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
 
 ### Run the live exploit demo
 
@@ -288,12 +288,12 @@ Shipcheck-/
 
 ## 🧭 Next Steps
 
-1. **API + dashboard (FR-8):** FastAPI app at `shipcheck.api.main` with `POST /scan` and the verdict/evidence views; wire the orchestrator to call the PR bot for each `VERIFIED_PASSED` fix.
+1. **API + dashboard (FR-8):** FastAPI app at `shipcheck.api.main` with `POST /scan` and the verdict/evidence views.
 2. **Golden-run replay:** record a full scan's evidence under `golden/` so the demo never depends on a live model/sandbox; then point the `Dockerfile` at the API.
 3. **Real end-to-end run:** wire the live Nemotron client + a real scanner so `ShipCheckScanner.scan()` runs against `vulnshop` with no stubs.
 4. Tests for triage, planner and markers.
 
-> **Done:** ✅ FR-6 fix engine, ✅ the scan orchestrator, ✅ the `vulnshop` demo fixture (exploited live by the real harness — XSS, CMDi and traversal markers all fire), and ✅ FR-7 draft-PR bot.
+> **Done:** ✅ FR-6 fix engine, ✅ the scan orchestrator (now opens draft PRs for verified fixes when `open_prs=True`), ✅ the `vulnshop` demo fixture (exploited live by the real harness — XSS, CMDi and traversal markers all fire), and ✅ FR-7 draft-PR bot.
 
 ---
 

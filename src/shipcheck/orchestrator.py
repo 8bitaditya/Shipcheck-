@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,7 @@ from shipcheck.contracts.verdict import (
 )
 from shipcheck.ingest.diff import extract_changed_filenames
 from shipcheck.planning.planner import AttackPlanner
+from shipcheck.pr.github_bot import GitHubPRBot
 from shipcheck.probes.harness import ProbeHarness
 from shipcheck.rectify.fixer import RectificationEngine
 from shipcheck.sandbox.base import SandboxBase
@@ -48,6 +49,7 @@ class ScanResult(BaseModel):
     confirmed_count: int = 0
     fixed_count: int = 0
     overall_risk_score: float = 0.0
+    pull_requests: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 def _reachability_level(score: float) -> ReachabilityLevel:
@@ -71,12 +73,14 @@ class ShipCheckScanner:
         planner: Optional[AttackPlanner] = None,
         harness: Optional[ProbeHarness] = None,
         rectifier: Optional[RectificationEngine] = None,
+        pr_bot: Optional[GitHubPRBot] = None,
         max_concurrent: Optional[int] = None,
     ):
         self.triage = triage or TriageRunner()
         self.planner = planner or AttackPlanner()
         self.harness = harness or ProbeHarness()
         self.rectifier = rectifier or RectificationEngine()
+        self.pr_bot = pr_bot
         self.max_concurrent = max_concurrent or config.MAX_CONCURRENT_OPS
 
     async def scan(
@@ -90,6 +94,8 @@ class ShipCheckScanner:
         target_dir: str = "/workspace",
         test_cmd: Optional[str] = "python -m pytest -q",
         rectify: bool = True,
+        open_prs: bool = False,
+        pr_base: str = "main",
     ) -> ScanResult:
         """Run triage -> plan -> probe -> verdict -> rectify over a PR diff.
 
@@ -130,8 +136,14 @@ class ShipCheckScanner:
         for finding in findings:
             self._attach_verdict(finding)
 
-        # 5. Rectify: fix + re-verify every confirmed finding.
+        # 5. Rectify: fix + re-verify every confirmed finding, then (opt-in)
+        #    open a draft PR for each fix that passed the gate.
         fixed = 0
+        pull_requests: List[Dict[str, Any]] = []
+        bot = self.pr_bot if open_prs else None
+        if open_prs and bot is None:
+            bot = GitHubPRBot()
+
         if rectify:
             for finding in findings:
                 if not finding.is_confirmed:
@@ -143,8 +155,19 @@ class ShipCheckScanner:
                     finding, plan, sandbox,
                     app_cmd=app_cmd, target_dir=target_dir, test_cmd=test_cmd,
                 )
-                if finding.fix.is_verified_for_pr():
-                    fixed += 1
+                if not finding.fix.is_verified_for_pr():
+                    continue
+                fixed += 1
+                if bot is not None:
+                    pr = await bot.open_draft_pr(finding, base=pr_base)
+                    if pr:
+                        pull_requests.append(
+                            {
+                                "finding_id": finding.finding_id,
+                                "number": pr.get("number"),
+                                "url": pr.get("html_url"),
+                            }
+                        )
 
         confirmed = sum(1 for f in findings if f.is_confirmed)
         overall = max((f.score for f in findings), default=0.0)
@@ -156,6 +179,7 @@ class ShipCheckScanner:
             confirmed_count=confirmed,
             fixed_count=fixed,
             overall_risk_score=overall,
+            pull_requests=pull_requests,
         )
 
     # ------------------------------------------------------------------ #
