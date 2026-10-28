@@ -43,3 +43,7 @@ jobs:
     - name: Run orchestrator tests
       run: |
         pytest tests/test_orchestrator.py -v
+
+    - name: Run PR bot tests (FR-7)
+      run: |
+        pytest tests/test_pr_bot.py -v
