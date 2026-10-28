@@ -47,3 +47,7 @@ jobs:
     - name: Run PR bot tests (FR-7)
       run: |
         pytest tests/test_pr_bot.py -v
+
+    - name: Run API tests (FR-8)
+      run: |
+        pytest tests/test_api.py -v

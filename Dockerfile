@@ -21,10 +21,8 @@ COPY tests/ /app/tests/
 # Install package in editable mode
 RUN pip install --no-cache-dir -e .
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 HOST=0.0.0.0 PORT=8000
+EXPOSE 8000
 
-# No API exists yet, so the default command runs the test suite.
-# Once shipcheck.api.main is built, switch to:
-#   EXPOSE 8000
-#   CMD ["uvicorn", "shipcheck.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-CMD ["python", "-m", "pytest", "-q"]
+# Serve the ShipCheck dashboard + API (FR-8).
+CMD ["uvicorn", "shipcheck.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
