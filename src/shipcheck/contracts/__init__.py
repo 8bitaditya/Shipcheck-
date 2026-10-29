@@ -39,6 +39,10 @@ from shipcheck.contracts.verdict import (
     REACHABILITY_WEIGHTS,
     EXPOSURE_WEIGHTS,
 )
+from shipcheck.contracts.grounding import (
+    AdvisoryGrounding,
+    AdvisorySource,
+)
 from shipcheck.contracts.finding import (
     Finding,
     FindingTarget,
@@ -48,6 +52,9 @@ __all__ = [
     # finding.py
     "Finding",
     "FindingTarget",
+    # grounding.py
+    "AdvisoryGrounding",
+    "AdvisorySource",
     # attack_plan.py
     "AttackPlan",
     "AttackPlanBatch",

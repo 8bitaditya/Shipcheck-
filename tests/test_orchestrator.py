@@ -12,6 +12,7 @@ from shipcheck.contracts.attack_plan import AttackPlan, AttackPlanBatch, VulnCla
 from shipcheck.contracts.evidence import Evidence, ProbeVerdict
 from shipcheck.contracts.finding import Finding, FindingTarget
 from shipcheck.contracts.fix import DiffHunk, FixPatch, FixStatus
+from shipcheck.contracts.grounding import AdvisoryGrounding, AdvisorySource
 from shipcheck.contracts.verdict import VerdictStatus
 from shipcheck.orchestrator import ScanResult, ShipCheckScanner
 from shipcheck.sandbox.base import SandboxBase, SandboxResult
@@ -129,13 +130,31 @@ class StubPRBot:
         return {"number": 42, "html_url": "https://github.com/o/r/pull/42"}
 
 
-def _scanner(findings, plans, *, marker_found, rectifier, pr_bot=None) -> ShipCheckScanner:
+class StubGrounder:
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls = []
+
+    async def ground_finding(self, finding):
+        self.calls.append(finding.finding_id)
+        if self.fail:
+            raise RuntimeError("tavily down")
+        return AdvisoryGrounding(
+            finding_id=finding.finding_id, provider="tavily", query="q",
+            advisory_ids=["CWE-89", "CVE-2024-0001"], cwe_id="CWE-89",
+            canonical_fix="Use parameterized queries.",
+            sources=[AdvisorySource(title="adv", url="https://example.org/adv")],
+        )
+
+
+def _scanner(findings, plans, *, marker_found, rectifier, pr_bot=None, grounder=None) -> ShipCheckScanner:
     return ShipCheckScanner(
         triage=StubTriage(findings),
         planner=StubPlanner(AttackPlanBatch(plans=plans)),
         harness=StubHarness(marker_found=marker_found),
         rectifier=rectifier,
         pr_bot=pr_bot,
+        grounder=grounder or StubGrounder(),
     )
 
 
@@ -258,3 +277,46 @@ async def test_open_prs_skips_unverified_fix():
     assert bot.calls == []  # fix failed the gate -> no PR
     assert result.pull_requests == []
     assert result.fixed_count == 0
+
+
+async def test_confirmed_findings_are_grounded():
+    f_conf = _finding(VulnClass.SQLI, "app.py", "/login")
+    plan = _plan(VulnClass.SQLI, "app.py", "/login", "admin")
+    grounder = StubGrounder()
+    scanner = _scanner([f_conf], [plan], marker_found=True,
+                       rectifier=StubRectifier(), grounder=grounder)
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"})
+
+    f = result.findings[0]
+    assert grounder.calls == [f.finding_id]
+    assert f.grounding is not None and f.grounding.is_live
+    assert "CVE-2024-0001" in f.grounding.advisory_ids
+    assert f.cwe_id == "CWE-89"  # back-filled from grounding
+
+
+async def test_unconfirmed_findings_are_not_grounded():
+    finding = _finding(VulnClass.SQLI, "app.py", "/login")
+    plan = _plan(VulnClass.SQLI, "app.py", "/login", "admin")
+    grounder = StubGrounder()
+    scanner = _scanner([finding], [plan], marker_found=False,
+                       rectifier=StubRectifier(), grounder=grounder)
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"})
+
+    assert grounder.calls == []
+    assert result.findings[0].grounding is None
+
+
+async def test_grounding_error_falls_back_without_failing_scan():
+    finding = _finding(VulnClass.SQLI, "app.py", "/login")
+    plan = _plan(VulnClass.SQLI, "app.py", "/login", "admin")
+    scanner = _scanner([finding], [plan], marker_found=True,
+                       rectifier=StubRectifier(), grounder=StubGrounder(fail=True))
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"})
+
+    g = result.findings[0].grounding
+    assert g is not None and g.provider == "static" and not g.is_live
+    assert "CWE-89" in g.advisory_ids
+    assert result.fixed_count == 1  # rest of the pipeline still ran

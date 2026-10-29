@@ -45,6 +45,9 @@ def test_demo_returns_confirmed_fixed_finding(client):
     assert f["vuln_class"] == "sqli"
     assert f["verdict"]["score"] > 0
     assert f["fix"]["recheck_attack_marker_absent"] is True
+    # demo grounding is the offline reference and says so
+    assert f["grounding"]["provider"] == "static"
+    assert "CWE-89" in f["grounding"]["advisory_ids"]
 
 
 def test_scan_uses_injected_runner(client):

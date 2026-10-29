@@ -93,11 +93,12 @@ What is in the `draft` branch today, and what still needs building.
 | Attack planning | `planning/planner.py`, `planning/tavily_client.py` | ✅ Built. Uses the mock LLM and offline grounding when no keys are set. No tests yet |
 | Probe harness | `probes/harness.py`, `probes/markers.py` | ✅ Built for 4 classes: SQLi, command injection, path traversal, reflected XSS. Payloads are shell-quoted and URL-encoded, so quoted SQLi like `' OR 1=1--` is delivered intact (14 tests in `test_probe_harness.py`) |
 | Risk scoring | `contracts/verdict.py`, `scoring/reachability.py` | ✅ Built (`compute_risk_score`, reachability heuristic) |
+| Advisory grounding (FR-5) | `planning/tavily_client.py`, `contracts/grounding.py` | ✅ Built. Every confirmed finding gets Tavily-grounded CVE/GHSA/CWE IDs, affected versions (dependency findings) and the canonical fix, shown on the dashboard and in the PR body. Without a key it uses a built-in CWE/OWASP reference and labels it as offline. 6 tests |
 | Sandboxes | `sandbox/` | ✅ Built. ConTree backend + local fallback. 9 tests |
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
 | Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
 | Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. 6 tests |
-| End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → rectify, probes fan out one forked sandbox per plan behind a semaphore, and (opt-in `open_prs=True`) opens a draft PR per verified fix. Returns a `ScanResult`. 7 tests |
+| End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → ground → rectify, probes fan out one forked sandbox per plan behind a semaphore, and (opt-in `open_prs=True`) opens a draft PR per verified fix. Returns a `ScanResult`. 10 tests |
 | Demo fixture | `fixtures/vulnshop/` | ✅ Built. A Flask app with one real bug per class (SQLi, CMDi, traversal, XSS); the probe harness exploits it live (see the live test) |
 | PR bot (FR-7) | `pr/github_bot.py` | ✅ Built. Opens a **draft** PR with an evidence body on a `shipcheck/fix-*` branch, only for a `VERIFIED_PASSED` fix, dedupes by head ref, never merges. 5 tests |
 | **Golden-run replay** | `golden/` | ❌ Not built |
@@ -133,7 +134,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **71 passed, 4 skipped** (26 contract + 9 sandbox + 14 probe-harness + 6 rectification + 7 orchestrator + 5 PR-bot + 4 API tests; the 4 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **80 passed, 4 skipped** (26 contract + 9 sandbox + 14 probe-harness + 6 grounding + 6 rectification + 10 orchestrator + 5 PR-bot + 4 API tests; the 4 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
 
 ### Run the dashboard
 
@@ -165,7 +166,7 @@ cp .env.example .env
 | Variable | Purpose | Default when unset |
 | :--- | :--- | :--- |
 | `NEBIUS_API_KEY`, `NEBIUS_PROJECT_ID` | Nemotron models + ConTree sandboxes | Mock LLM; local sandbox |
-| `TAVILY_API_KEY` | Exploit research grounding | Offline fallback text |
+| `TAVILY_API_KEY` | Exploit research for the planner + CVE/advisory grounding of confirmed findings | Offline fallback text / built-in CWE/OWASP reference (labelled offline) |
 | `GITHUB_TOKEN`, `GITHUB_REPOSITORY` | Fetch PR diffs / open draft PRs | — |
 | `LLM_BACKEND` | `nemotron` or `mock` | `mock` |
 | `SANDBOX_BACKEND` | `contree`, `docker` or `mock` | `mock` |
@@ -241,6 +242,23 @@ A confirmed critical finding on a public, directly reachable endpoint scores 100
 
 ---
 
+## 🔎 Where Tavily Is Used
+
+Tavily is called in two places, both in `planning/tavily_client.py` (`POST https://api.tavily.com/search`, `include_answer=True`, key sent as a Bearer header):
+
+1. **Attack planning:** `AttackPlanner` asks Tavily for current exploit write-ups for the detected vulnerability class and puts the answer and sources into the Nemotron Ultra planning prompt.
+2. **Advisory grounding (FR-5):** after the verdict, `ShipCheckScanner.scan()` grounds every **confirmed** finding in parallel with `ground_finding()`. The result (`AdvisoryGrounding`) holds:
+   - CVE / GHSA / CWE IDs pulled from the Tavily answer and results,
+   - affected version ranges (only for dependency findings; for first-party code the CVEs Tavily returns are related advisories, not this bug),
+   - the canonical fix (Tavily's answer),
+   - the cited source links (only plain `http(s)` URLs are kept).
+
+   It is shown on the dashboard card and as section 2 of the draft-PR body. Tavily titles and text are treated as untrusted and escaped there.
+
+If `TAVILY_API_KEY` is unset or Tavily errors, the finding gets a built-in CWE/OWASP reference instead, with `provider: "static"` and a note saying why. The report and PR body label it as offline, never as a Tavily result. A grounding failure never stops the scan. Queries are currently built deterministically from the CWE, class and sink; Nano-written queries are not wired yet. The `/api/demo` sample shows the offline reference.
+
+---
+
 ## 🤖 Model Tiers (NVIDIA Nemotron 3)
 
 | Tier | Model ID | Context | Role |
@@ -277,8 +295,9 @@ Shipcheck-/
 │   ├── test_contracts.py         # 26 tests
 │   ├── test_sandbox.py           # 9 tests
 │   ├── test_probe_harness.py     # 14 tests (payload quoting)
+│   ├── test_grounding.py         # 6 tests (FR-5 Tavily grounding)
 │   ├── test_rectify.py           # 6 tests (FR-6 fix loop)
-│   ├── test_orchestrator.py      # 7 tests (end-to-end chaining)
+│   ├── test_orchestrator.py      # 10 tests (end-to-end chaining)
 │   ├── test_pr_bot.py            # 5 tests (FR-7 draft PR)
 │   ├── test_api.py               # 4 tests (FR-8 dashboard/API)
 │   └── test_vulnshop_live.py     # 4 live exploit tests (opt-in: SHIPCHECK_LIVE=1)
@@ -305,7 +324,7 @@ All eight functional requirements are built. What remains is hardening and the d
 2. **Golden-run replay:** record a full scan's evidence under `golden/` and serve it via `GET /api/demo` so the judges' demo never depends on a live model/sandbox.
 3. Tests for triage, planner and markers; deploy to a Nebius Serverless Endpoint.
 
-> **Done:** ✅ FR-6 fix engine · ✅ scan orchestrator (opens draft PRs when `open_prs=True`) · ✅ `vulnshop` fixture (exploited live — SQLi, XSS, CMDi, traversal) · ✅ FR-7 draft-PR bot · ✅ FR-8 dashboard/API.
+> **Done:** ✅ FR-6 fix engine · ✅ scan orchestrator (opens draft PRs when `open_prs=True`) · ✅ `vulnshop` fixture (exploited live — SQLi, XSS, CMDi, traversal) · ✅ FR-5 Tavily advisory grounding · ✅ FR-7 draft-PR bot · ✅ FR-8 dashboard/API.
 
 ---
 

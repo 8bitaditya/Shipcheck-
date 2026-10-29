@@ -1,12 +1,14 @@
 """ShipCheck scan orchestrator: chains the full pipeline into one scan() call.
 
-    diff -> triage -> plan -> probe -> verdict -> rectify
+    diff -> triage -> plan -> probe -> verdict -> ground -> rectify
 
 Per the PRD, probes fan out in parallel (one forked sandbox branch per plan)
 behind an asyncio.Semaphore capped at MAX_CONCURRENT_OPS, the verdict is a
 deterministic risk score, and confirmed findings are rectified with the
 "No PASS, No PR" gate. The orchestrator fills each Finding's probe, evidence,
-verdict and fix fields and returns a ScanResult.
+verdict, grounding and fix fields and returns a ScanResult. Every confirmed
+finding is grounded with Tavily CVE/advisory context (FR-5) for the report
+and the PR body.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from shipcheck.contracts.verdict import (
 )
 from shipcheck.ingest.diff import extract_changed_filenames
 from shipcheck.planning.planner import AttackPlanner
+from shipcheck.planning.tavily_client import TavilyGroundingClient
 from shipcheck.pr.github_bot import GitHubPRBot
 from shipcheck.probes.harness import ProbeHarness
 from shipcheck.rectify.fixer import RectificationEngine
@@ -74,6 +77,7 @@ class ShipCheckScanner:
         harness: Optional[ProbeHarness] = None,
         rectifier: Optional[RectificationEngine] = None,
         pr_bot: Optional[GitHubPRBot] = None,
+        grounder: Optional[TavilyGroundingClient] = None,
         max_concurrent: Optional[int] = None,
     ):
         self.triage = triage or TriageRunner()
@@ -81,6 +85,7 @@ class ShipCheckScanner:
         self.harness = harness or ProbeHarness()
         self.rectifier = rectifier or RectificationEngine()
         self.pr_bot = pr_bot
+        self.grounder = grounder or TavilyGroundingClient()
         self.max_concurrent = max_concurrent or config.MAX_CONCURRENT_OPS
 
     async def scan(
@@ -97,7 +102,7 @@ class ShipCheckScanner:
         open_prs: bool = False,
         pr_base: str = "main",
     ) -> ScanResult:
-        """Run triage -> plan -> probe -> verdict -> rectify over a PR diff.
+        """Run triage -> plan -> probe -> verdict -> ground -> rectify over a PR diff.
 
         The code under test must already be materialized in `sandbox`.
         """
@@ -136,7 +141,10 @@ class ShipCheckScanner:
         for finding in findings:
             self._attach_verdict(finding)
 
-        # 5. Rectify: fix + re-verify every confirmed finding, then (opt-in)
+        # 5. Ground: Tavily CVE/advisory context for every confirmed finding.
+        await self._ground_confirmed(findings, sem)
+
+        # 6. Rectify: fix + re-verify every confirmed finding, then (opt-in)
         #    open a draft PR for each fix that passed the gate.
         fixed = 0
         pull_requests: List[Dict[str, Any]] = []
@@ -209,6 +217,23 @@ class ShipCheckScanner:
                 used.add(id(chosen))
                 mapping[plan.plan_id] = chosen
         return mapping
+
+    async def _ground_confirmed(self, findings: List[Finding], sem: asyncio.Semaphore) -> None:
+        """Attach AdvisoryGrounding to each confirmed finding (in parallel)."""
+
+        async def _ground(finding: Finding) -> None:
+            async with sem:
+                try:
+                    finding.grounding = await self.grounder.ground_finding(finding)
+                except Exception as err:  # grounding must never sink a scan
+                    logger.warning("Grounding failed for %s: %s", finding.finding_id, err)
+                    finding.grounding = TavilyGroundingClient.static_grounding(
+                        finding, note=f"grounding error ({type(err).__name__}); offline reference used"
+                    )
+            if finding.cwe_id is None and finding.grounding.cwe_id:
+                finding.cwe_id = finding.grounding.cwe_id
+
+        await asyncio.gather(*[_ground(f) for f in findings if f.is_confirmed])
 
     def _attach_verdict(self, finding: Finding) -> None:
         """Compute and attach a VerdictCard using the reachability + exposure heuristics."""

@@ -43,6 +43,38 @@ def _diff_block(finding: Finding) -> str:
     return "```diff\n" + "\n".join(lines) + "\n```"
 
 
+def _md_text(text: str) -> str:
+    """Neutralise markdown/HTML in untrusted text (Tavily titles are web content)."""
+    return re.sub(r"([\\`*_\[\]<>|#])", r"\\\1", text)
+
+
+def _grounding_section(finding: Finding) -> list:
+    """Render the advisory-grounding section (FR-5 / G4)."""
+    g = finding.grounding
+    if g is None:
+        return ["_No advisory grounding recorded._"]
+    provider = "Tavily search" if g.is_live else "offline CWE/OWASP reference (not a live Tavily lookup)"
+    lines = [f"_Source: {provider}._"]
+    if g.note:
+        lines.append(f"_{_md_text(g.note)}_")
+    ids = ", ".join(f"`{i}`" for i in g.advisory_ids) or "_none found_"
+    label = "Advisory IDs" if finding.vuln_class.value == "deps" else "Weakness / related advisories"
+    lines += [
+        "",
+        f"- **{label}:** {ids}",
+        "- **Affected versions:** "
+        + (", ".join(f"`{v}`" for v in g.affected_versions) if g.affected_versions
+           else "n/a — first-party code introduced in this PR"),
+        f"- **Canonical fix:** {_md_text(g.canonical_fix) if g.canonical_fix else '_n/a_'}",
+    ]
+    if g.sources:
+        lines.append("- **Sources:**")
+        for src in g.sources:
+            url = src.url.replace("(", "%28").replace(")", "%29")
+            lines.append(f"  - [{_md_text(src.title)}]({url})")
+    return lines
+
+
 def render_pr_body(finding: Finding, *, repo: str = "") -> str:
     """Build the evidence-first PR body (FR-7 template)."""
     verdict = finding.verdict
@@ -78,10 +110,11 @@ def render_pr_body(finding: Finding, *, repo: str = "") -> str:
     else:
         parts.append("_No captured evidence._")
 
-    parts += ["", "### 2. Root cause", (fix.root_cause if fix and fix.root_cause else "_n/a_")]
-    parts += ["", "### 3. Fix", (fix.explanation if fix and fix.explanation else ""), "", _diff_block(finding)]
+    parts += ["", "### 2. Advisory grounding"] + _grounding_section(finding)
+    parts += ["", "### 3. Root cause", (fix.root_cause if fix and fix.root_cause else "_n/a_")]
+    parts += ["", "### 4. Fix", (fix.explanation if fix and fix.explanation else ""), "", _diff_block(finding)]
 
-    parts += ["", "### 4. Re-verification"]
+    parts += ["", "### 5. Re-verification"]
     if fix:
         marker_line = "✅ marker **absent**" if fix.recheck_attack_marker_absent else "❌ marker still present"
         tests_line = "✅ repo tests **passed**" if fix.repo_tests_passed else "❌ repo tests failed"
@@ -94,7 +127,7 @@ def render_pr_body(finding: Finding, *, repo: str = "") -> str:
 
     parts += [
         "",
-        "### 5. Reviewer checklist",
+        "### 6. Reviewer checklist",
         "- [ ] The patch addresses the root cause, not just the symptom",
         "- [ ] No unrelated code was changed",
         "- [ ] The existing tests remain meaningful",

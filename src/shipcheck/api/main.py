@@ -26,6 +26,7 @@ from shipcheck.contracts.finding import Finding, FindingTarget
 from shipcheck.contracts.fix import DiffHunk, FixPatch, FixStatus
 from shipcheck.contracts.verdict import SeverityLevel, VerdictCard
 from shipcheck.orchestrator import ScanResult, ShipCheckScanner
+from shipcheck.planning.tavily_client import TavilyGroundingClient
 from shipcheck.sandbox.client import SandboxClient
 
 app = FastAPI(title="ShipCheck", version="0.1.0")
@@ -131,6 +132,10 @@ def _demo_result() -> ScanResult:
         recheck_attack_marker_absent=True,
         repo_tests_passed=True,
         verification_log="Re-probe verdict: UNCONFIRMED (marker_found=False)\nRepo tests exit_code=0",
+    )
+    # Sample view only: offline CWE/OWASP grounding, labelled as such (not a Tavily call).
+    finding.grounding = TavilyGroundingClient.static_grounding(
+        finding, note="Demo sample: offline reference shown; live scans query Tavily when TAVILY_API_KEY is set"
     )
     return ScanResult(
         commit_sha="demo",

@@ -62,6 +62,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   .gate.pass { color:var(--ok); } .gate.fail { color:var(--bad); }
   a { color:var(--accent); }
   .muted { color:var(--muted); }
+  .grounding { border-left:3px solid var(--accent); padding:4px 0 4px 10px; margin:10px 0; }
   .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
 </style>
 </head>
@@ -85,7 +86,8 @@ DASHBOARD_HTML = r"""<!doctype html>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => (s==null?"":String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc = s => (s==null?"":String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl = u => /^https?:\/\/[^\s"'<>`]+$/i.test(u||'') ? u : '#';
 function scoreColor(n){ if(n>=70) return '#f85149'; if(n>=40) return '#d29922'; if(n>0) return '#3fb950'; return '#8b98a9'; }
 
 function diffHtml(fix){
@@ -112,6 +114,22 @@ function timeline(f){
   return '<div class="timeline">'+steps.join('')+'</div>';
 }
 
+function groundingHtml(g){
+  if(!g) return '';
+  const live = g.provider === 'tavily';
+  const ids = (g.advisory_ids||[]).map(i=>`<code>${esc(i)}</code>`).join(' ') || '<span class="muted">none found</span>';
+  const vers = (g.affected_versions||[]).length ? g.affected_versions.map(v=>`<code>${esc(v)}</code>`).join(' ')
+    : '<span class="muted">n/a — first-party code</span>';
+  const srcs = (g.sources||[]).map(s=>`<a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>`).join(' · ');
+  return `<div class="grounding">
+    <div class="kv"><strong>Advisory grounding</strong> <span class="pill">${live?'Tavily':'offline reference'}</span></div>
+    <div class="kv">IDs: ${ids} · affected versions: ${vers}</div>
+    <div class="kv">Canonical fix: ${esc(g.canonical_fix||'n/a')}</div>
+    ${srcs?`<div class="kv">Sources: ${srcs}</div>`:''}
+    ${g.note?`<div class="kv muted">${esc(g.note)}</div>`:''}
+  </div>`;
+}
+
 function findingCard(f, prs){
   const score = f.verdict ? f.verdict.score : 0;
   const sev = f.severity || (f.verdict && f.verdict.score_breakdown && f.verdict.score_breakdown.severity) || '';
@@ -132,10 +150,11 @@ function findingCard(f, prs){
       <div class="kv"><strong>Evidence</strong> — verdict: <code>${esc(ev.verdict||'')}</code></div>
       <div class="kv">Payload: <code>${esc(ev.payload||'')}</code> · marker: <code>${esc(ev.matched_text||ev.target_marker||'')}</code> · status: <code>${esc(ev.response_status||'')}</code></div>
       <span class="excerpt">${esc((ev.response_excerpt||'').slice(0,500))}</span>
+      ${groundingHtml(f.grounding)}
       ${fix?`<div class="kv"><strong>Fix</strong> — ${esc(fix.root_cause||'')}</div>
       <pre class="diff">${diffHtml(fix)}</pre>
       <div class="gate ${verified?'pass':'fail'}">${verified?'PASS · draft PR eligible':'NO PASS · no PR (human gate)'}</div>`:''}
-      ${pr?`<div class="kv">Draft PR: <a href="${esc(pr.url)}" target="_blank">#${esc(pr.number)}</a></div>`:''}
+      ${pr?`<div class="kv">Draft PR: <a href="${esc(safeUrl(pr.url))}" target="_blank" rel="noopener noreferrer">#${esc(pr.number)}</a></div>`:''}
     </div>
   </div>`;
 }
