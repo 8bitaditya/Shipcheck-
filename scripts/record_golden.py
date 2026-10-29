@@ -6,6 +6,7 @@ attack planning, live probes, Tavily grounding and Nemotron Super fixes with the
 replays. Needs NEBIUS_API_KEY (+ TAVILY_API_KEY) and the scanners on PATH.
 
     python scripts/record_golden.py                    # scan + write golden/
+    python scripts/record_golden.py --backend docker   # same, inside probe-image containers
     python scripts/record_golden.py --from result.json # just redact + write
     python scripts/record_golden.py --pr <finding_id or vuln class> --pr-url URL --pr-number N
 """
@@ -28,13 +29,13 @@ from shipcheck.golden import GOLDEN_PATH, redact_local_details  # noqa: E402
 APP_DIR = "fixtures/vulnshop"
 
 
-async def scan() -> str:
+async def scan(backend: str = "mock") -> str:
     from shipcheck.orchestrator import ShipCheckScanner
     from shipcheck.probes.harness import ProbeHarness
     from shipcheck.rectify.fixer import RectificationEngine
     from shipcheck.sandbox.client import SandboxClient
 
-    sandbox = SandboxClient(backend_type="mock").create_sandbox()
+    sandbox = SandboxClient(backend_type=backend).create_sandbox()
     src = REPO / APP_DIR
     files = {
         f"{APP_DIR}/{p.relative_to(src)}": p.read_text()
@@ -43,15 +44,20 @@ async def scan() -> str:
     }
     await sandbox.apply_files(files)
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    if backend == "docker":
+        # Each sandbox is its own container: own loopback, own Python.
+        port, py, concurrency = 5000, "python", 4
+    else:
+        # Local sandboxes share the host's network and ports: one at a time.
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        py, concurrency = shlex.quote(sys.executable), 1
     harness = ProbeHarness(port=port)
-    py = shlex.quote(sys.executable)
     scanner = ShipCheckScanner(
         harness=harness,
         rectifier=RectificationEngine(harness=harness),
-        max_concurrent=1,  # local sandboxes share one host port
+        max_concurrent=concurrency,
     )
     app_py = files[f"{APP_DIR}/app.py"]
     diff = (
@@ -66,8 +72,12 @@ async def scan() -> str:
         target_dir=f"{sandbox.default_workdir}/{APP_DIR}",
         test_cmd=f"cd {APP_DIR} && {py} -m pytest -q test_app.py",
     )
-    print(f"scan took {time.monotonic() - t:.1f}s: {result.findings_count} findings, "
+    print(f"[{backend}] scan took {time.monotonic() - t:.1f}s: {result.findings_count} findings, "
           f"{result.confirmed_count} confirmed, {result.fixed_count} fixed")
+    for f in sorted(result.findings, key=lambda f: -f.score):
+        print(f"  {f.vuln_class.value:9} {f.target.file}:{f.target.line} {f.target.endpoint or '-':10} "
+              f"score={f.score:5} fix={f.fix.status.value if f.fix else '-'}")
+    sandbox.cleanup()
     return result.model_dump_json()
 
 
@@ -86,6 +96,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--from", dest="src", type=Path, help="existing ScanResult JSON to redact instead of scanning")
     ap.add_argument("--out", type=Path, default=GOLDEN_PATH)
+    ap.add_argument("--backend", default="mock", choices=["mock", "docker", "contree"],
+                    help="sandbox backend (docker = probe-image containers)")
     ap.add_argument("--pr", help="finding_id or vuln class the PR fixes")
     ap.add_argument("--pr-url")
     ap.add_argument("--pr-number", type=int)
@@ -94,7 +106,7 @@ def main() -> None:
     for noisy in ("httpx", "httpx2", "openai", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    raw = args.src.read_text() if args.src else asyncio.run(scan())
+    raw = args.src.read_text() if args.src else asyncio.run(scan(args.backend))
     data = json.loads(redact_local_details(raw))
     if args.pr:
         attach_pr(data, args.pr, args.pr_url, args.pr_number)

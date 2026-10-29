@@ -5,12 +5,12 @@
 ## How it was recorded
 
 - **Date:** 2026-10-29
-- **Command:** `python scripts/record_golden.py` (one scan, then redaction)
+- **Command:** `python scripts/record_golden.py --backend docker` (one scan, then redaction)
 - **Triage:** real scanners — semgrep 1.182.1 (`p/owasp-top-ten` plus ShipCheck's path-traversal rule), gitleaks 8.30.1, osv-scanner 2.7.0, pip-audit 2.10.1
 - **Planning:** `nvidia/Nemotron-3-Ultra-550b-a55b`; all 4 plans came from the model, none from templates
 - **Fixes:** `nvidia/nemotron-3-super-120b-a12b`
 - **Grounding:** live Tavily search
-- **Sandbox:** the **local** backend (temp-dir subprocess sandbox), not ConTree
+- **Sandbox:** the **Docker** backend: every sandbox and fork is an isolated `linux/amd64` container of the probe image (`sandbox/image/Dockerfile.probe`), the same image ConTree is meant to run. Not ConTree itself: Sandboxes access is still pending.
 
 ## Result
 
@@ -20,6 +20,8 @@ The fifth finding is an XSS on `/export`, where ping's error output is echoed un
 
 The SQLi fix was opened as a real draft PR: [8bitaditya/Shipcheck-#1](https://github.com/8bitaditya/Shipcheck-/pull/1).
 
+The probe image used for this recording had no `ping`, so `/export` printed `ping: not found` before the injected `id` ran. The exploit is unaffected. `iputils-ping` has since been added to `Dockerfile.probe`.
+
 ## Redactions
 
-The command-injection probe runs `id` on the recording machine, so its output has been rewritten from the real username and groups to `uid=501(sandbox) gid=20(sandbox) groups=<redacted>`. Local temp paths, the home directory and the username are also replaced. Nothing else was edited: payloads, markers, scores, fixes and the Tavily sources are as recorded. `scripts/record_golden.py --from <result.json>` applies the same redaction to any saved run.
+The command-injection probe runs `id`. Inside the container that is `root`, which is left as is; only the group list is replaced with `groups=<redacted>`. On the local backend the recorder also replaces the real username, home directory and temp paths. Nothing else was edited: payloads, markers, scores, fixes and the Tavily sources are as recorded. `scripts/record_golden.py --from <result.json>` applies the same redaction to any saved run.

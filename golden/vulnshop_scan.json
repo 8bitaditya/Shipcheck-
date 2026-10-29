@@ -1,5 +1,5 @@
 {
-  "scan_id": "scan-e5cbf68723a4",
+  "scan_id": "scan-04a41da2b8e3",
   "commit_sha": "vulnshop-golden",
   "findings": [
     {
@@ -17,7 +17,7 @@
         "code_snippet": "    result = subprocess.run(\n        \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5\n    )"
       },
       "probe": {
-        "plan_id": "plan-6b01eaceb7c7",
+        "plan_id": "plan-7fdd12c50c05",
         "vuln_class": "cmdi",
         "target_file": "fixtures/vulnshop/app.py",
         "sink": "subprocess.run(\"ping -c 1 \" + ip, shell=True, ...)",
@@ -28,30 +28,30 @@
         "parameter_name": "ip",
         "suggested_payload": "127.0.0.1; id",
         "headers": {},
-        "rationale": "The ip parameter is concatenated unsanitized into a shell command string with shell=True, allowing command chaining to execute arbitrary commands like id.",
+        "rationale": "The ip parameter is unsafely concatenated into a shell command string with shell=True, allowing command separation via semicolon to execute arbitrary commands like id.",
         "finding_id": "9e404534c315"
       },
       "evidence": {
-        "evidence_id": "ev-5be2bbddaf81",
-        "plan_id": "plan-6b01eaceb7c7",
+        "evidence_id": "ev-458e4f481b8a",
+        "plan_id": "plan-7fdd12c50c05",
         "payload": "127.0.0.1; id",
         "request": {
           "endpoint": "/export",
           "method": "GET"
         },
         "response_status": 200,
-        "response_excerpt": "<pre>PING 127.0.0.1 (127.0.0.1): 56 data bytes\n64 bytes from 127.0.0.1: icmp_seq=0 ttl=64 time=0.088 ms\n\n--- 127.0.0.1 ping statistics ---\n1 packets transmitted, 1 packets received, 0.0% packet loss\nround-trip min/avg/max/stddev = 0.088/0.088/0.088/0.000 ms\nuid=501(sandbox) gid=20(sandbox) groups=<redacted>",
+        "response_excerpt": "<pre>uid=0(root) gid=0(root) groups=<redacted>\n/bin/sh: 1: ping: not found\n</pre>",
         "verdict": "CONFIRMED",
         "marker_found": true,
         "target_marker": "uid=",
         "matched_text": "uid=",
         "sandbox_branch_id": null,
-        "execution_time_ms": 377.46595800854266,
-        "timestamp": "2026-10-29T17:00:24.445146+00:00",
+        "execution_time_ms": 1195.016374986153,
+        "timestamp": "2026-10-29T17:13:49.022425+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-9b46fcc57b89",
+        "verdict_id": "v-107decaf65c3",
         "finding_id": "9e404534c315",
         "status": "CONFIRMED",
         "score": 100.0,
@@ -73,7 +73,7 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-e52050325913",
+        "fix_id": "fix-69773332e0d5",
         "finding_id": "9e404534c315",
         "hunks": [
           {
@@ -83,12 +83,12 @@
             "allow_deletion": false
           }
         ],
-        "root_cause": "The ip parameter was directly concatenated into a shell command string, allowing command injection via shell metacharacters.",
-        "explanation": "Using subprocess.run with a list of arguments and shell=False prevents shell interpretation, while regex validation ensures the input resembles a valid IP or hostname.",
+        "root_cause": "User input was directly concatenated into a shell command string, allowing command injection via shell metacharacters.",
+        "explanation": "The fix uses subprocess.run with a list of arguments and shell=False, and validates the IP input to allow only safe characters, preventing injection.",
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
-        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid IP address\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.05s\n"
+        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid IP address\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"
       },
       "grounding": {
         "finding_id": "9e404534c315",
@@ -136,7 +136,7 @@
       "severity": "CRITICAL",
       "cve_id": null,
       "cwe_id": "CWE-78",
-      "created_at": "2026-10-29T17:00:19.435566+00:00"
+      "created_at": "2026-10-29T17:13:42.220566+00:00"
     },
     {
       "finding_id": "e23ba860d016",
@@ -153,10 +153,10 @@
         "code_snippet": "    username = request.form.get(\"username\", \"\")\n    password = request.form.get(\"password\", \"\")\n    conn = _db()\n    # VULN (SQLi): user input concatenated straight into the query.\n    query = (\n        \"SELECT username, email FROM users \"\n        \"WHERE username = '%s' AND password = '%s'\" % (username, password)\n    )\n    rows = conn.execute(query).fetchall()"
       },
       "probe": {
-        "plan_id": "plan-b54c153a4c8b",
+        "plan_id": "plan-96f6aecdc4d3",
         "vuln_class": "sqli",
         "target_file": "fixtures/vulnshop/app.py",
-        "sink": "conn.execute(query).fetchall()",
+        "sink": "conn.execute(query)",
         "payload_strategy": "boolean authentication bypass via SQL comment",
         "expected_marker": "admin@vulnshop.local",
         "route": "/login",
@@ -164,12 +164,12 @@
         "parameter_name": "username",
         "suggested_payload": "admin'--",
         "headers": {},
-        "rationale": "The username parameter is concatenated directly into the SQL query string, allowing injection of a comment to bypass password check and log in as admin.",
+        "rationale": "The username parameter is directly concatenated into the SQL query string, allowing injection of a comment to bypass the password check and log in as admin.",
         "finding_id": "e23ba860d016"
       },
       "evidence": {
-        "evidence_id": "ev-6d32eda24a42",
-        "plan_id": "plan-b54c153a4c8b",
+        "evidence_id": "ev-b54b7d74e341",
+        "plan_id": "plan-96f6aecdc4d3",
         "payload": "admin'--",
         "request": {
           "endpoint": "/login",
@@ -182,12 +182,12 @@
         "target_marker": "admin@vulnshop.local",
         "matched_text": "admin@vulnshop.local",
         "sandbox_branch_id": null,
-        "execution_time_ms": 370.1879580039531,
-        "timestamp": "2026-10-29T17:00:24.063059+00:00",
+        "execution_time_ms": 988.6984170007054,
+        "timestamp": "2026-10-29T17:13:48.830736+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-567f96d64242",
+        "verdict_id": "v-a556ab908d63",
         "finding_id": "e23ba860d016",
         "status": "CONFIRMED",
         "score": 100.0,
@@ -209,7 +209,7 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-f138d2d25c2c",
+        "fix_id": "fix-9edea9dd54a5",
         "finding_id": "e23ba860d016",
         "hunks": [
           {
@@ -224,7 +224,7 @@
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
-        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid credentials\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.05s\n"
+        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid credentials\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.10s\n"
       },
       "grounding": {
         "finding_id": "e23ba860d016",
@@ -272,10 +272,10 @@
       "severity": "CRITICAL",
       "cve_id": null,
       "cwe_id": "CWE-89",
-      "created_at": "2026-10-29T17:00:19.435392+00:00"
+      "created_at": "2026-10-29T17:13:42.218322+00:00"
     },
     {
-      "finding_id": "b17950e32ef9",
+      "finding_id": "a1e06d645808",
       "vuln_class": "traversal",
       "title": "User input from a Flask request reaches a filesystem path (path traversal); an attacker can use '../' to read files outside the intended directory.",
       "description": "User input from a Flask request reaches a filesystem path (path traversal); an attacker can use '../' to read files outside the intended directory.",
@@ -289,42 +289,42 @@
         "code_snippet": "    with open(path) as handle:"
       },
       "probe": {
-        "plan_id": "plan-7e37f89fadc6",
+        "plan_id": "plan-1d8179c9a5c7",
         "vuln_class": "traversal",
         "target_file": "fixtures/vulnshop/app.py",
-        "sink": "with open(path) as handle:",
-        "payload_strategy": "path traversal using directory traversal sequences to read /etc/passwd",
+        "sink": "open(path)",
+        "payload_strategy": "directory traversal to read /etc/passwd",
         "expected_marker": "root:",
         "route": "/download",
         "http_method": "GET",
         "parameter_name": "file",
-        "suggested_payload": "../../../../etc/passwd",
+        "suggested_payload": "../../../etc/passwd",
         "headers": {},
-        "rationale": "The file parameter is joined with the base directory without normalization, allowing directory traversal to read arbitrary files like /etc/passwd.",
-        "finding_id": "b17950e32ef9"
+        "rationale": "The file parameter is joined with the base directory without normalization, allowing path traversal sequences to escape the intended directory and read arbitrary files like /etc/passwd.",
+        "finding_id": "a1e06d645808"
       },
       "evidence": {
-        "evidence_id": "ev-28818d5c0df5",
-        "plan_id": "plan-7e37f89fadc6",
+        "evidence_id": "ev-d99969494adb",
+        "plan_id": "plan-1d8179c9a5c7",
         "payload": "../../../../../../../../../../../../etc/passwd",
         "request": {
           "endpoint": "/download",
           "method": "GET"
         },
         "response_status": 200,
-        "response_excerpt": "##\n# User Database\n# \n# Note that this file is consulted directly only when the system is running\n# in single-user mode.  At other times this information is provided by\n# Open Directory.\n#\n# See the opendirectoryd(8) man page for additional information about\n# Open Directory.\n##\nnobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false\nroot:*:0:0:System Administrator:/var/root:/bin/sh\ndaemon:*:1:1:System Services:/var/root:/usr/bin/false\n_uucp:*:4:4:Unix to Unix Copy Protocol:/var/spool/uucp:/u",
+        "response_excerpt": "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nsync:x:4:65534:sync:/bin:/bin/sync\ngames:x:5:60:games:/usr/games:/usr/sbin/nologin\nman:x:6:12:man:/var/cache/man:/usr/sbin/nologin\nlp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin\nmail:x:8:8:mail:/var/mail:/usr/sbin/nologin\nnews:x:9:9:news:/var/spool/news:/usr/sbin/nologin\nuucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin\nproxy:x:13:13:proxy:/bin",
         "verdict": "CONFIRMED",
         "marker_found": true,
         "target_marker": "root:",
         "matched_text": "root:",
         "sandbox_branch_id": null,
-        "execution_time_ms": 361.8609999830369,
-        "timestamp": "2026-10-29T17:00:24.810812+00:00",
+        "execution_time_ms": 887.5222080096137,
+        "timestamp": "2026-10-29T17:13:48.722755+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-83293250d62b",
-        "finding_id": "b17950e32ef9",
+        "verdict_id": "v-9780052d7360",
+        "finding_id": "a1e06d645808",
         "status": "CONFIRMED",
         "score": 100.0,
         "score_breakdown": {
@@ -345,25 +345,25 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-e12be8c1602a",
-        "finding_id": "b17950e32ef9",
+        "fix_id": "fix-615bb05dc505",
+        "finding_id": "a1e06d645808",
         "hunks": [
           {
             "file": "fixtures/vulnshop/app.py",
             "search": "    filename = request.args.get(\"file\", \"readme.txt\")\n    # VULN (path traversal): no normalization or prefix check.\n    path = os.path.join(BASE_DIR, \"files\", filename)\n    with open(path) as handle:\n        return handle.read()",
-            "replace": "    filename = request.args.get(\"file\", \"readme.txt\")\n    # FIXED: normalize and validate path stays within BASE_DIR/files\n    path = os.path.normpath(os.path.join(BASE_DIR, \"files\", filename))\n    if not path.startswith(os.path.normpath(BASE_DIR + os.sep + \"files\")):\n        return \"Access denied\", 403\n    with open(path) as handle:\n        return handle.read()",
+            "replace": "    filename = request.args.get(\"file\", \"readme.txt\")\n    # FIXED: normalize path and ensure it stays within BASE_DIR/files\n    path = os.path.normpath(os.path.join(BASE_DIR, \"files\", filename))\n    if not path.startswith(os.path.normpath(BASE_DIR + os.sep)):\n        return \"Access denied\", 403\n    with open(path) as handle:\n        return handle.read()",
             "allow_deletion": false
           }
         ],
         "root_cause": "User-supplied filename was joined without validation, allowing directory traversal via '../' sequences.",
-        "explanation": "Normalize the joined path and ensure it remains inside the intended base directory before opening.",
+        "explanation": "Normalize the joined path and verify it resolves within the intended base directory before opening.",
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
-        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Access denied\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.04s\n"
+        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Access denied\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"
       },
       "grounding": {
-        "finding_id": "b17950e32ef9",
+        "finding_id": "a1e06d645808",
         "provider": "tavily",
         "query": "CWE-22 path traversal with open(path) as handle: Python remediation canonical fix CVE advisory",
         "advisory_ids": [
@@ -404,11 +404,11 @@
         "note": null
       },
       "tool": "semgrep",
-      "rule_id": "var.folders.3q._1h65dn13cn46sw6kk1sw5wm0000gn.T.shipcheck.python.flask.path-traversal",
+      "rule_id": "tmp.shipcheck.python.flask.path-traversal",
       "severity": "CRITICAL",
       "cve_id": null,
       "cwe_id": "CWE-22",
-      "created_at": "2026-10-29T17:00:19.435617+00:00"
+      "created_at": "2026-10-29T17:13:42.220625+00:00"
     },
     {
       "finding_id": "a933f45a0bba",
@@ -427,7 +427,7 @@
       "probe": null,
       "evidence": null,
       "verdict": {
-        "verdict_id": "v-3fc97fa01a74",
+        "verdict_id": "v-b7e82a1e771c",
         "finding_id": "a933f45a0bba",
         "status": "UNCONFIRMED",
         "score": 2.0,
@@ -455,7 +455,7 @@
       "severity": "HIGH",
       "cve_id": null,
       "cwe_id": null,
-      "created_at": "2026-10-29T17:00:19.435590+00:00"
+      "created_at": "2026-10-29T17:13:42.220594+00:00"
     },
     {
       "finding_id": "ac4384d52f8a",
@@ -472,7 +472,7 @@
         "code_snippet": "    return \"<h1>Results for \" + query + \"</h1>\""
       },
       "probe": {
-        "plan_id": "plan-978db2b96ddf",
+        "plan_id": "plan-caf269ab620b",
         "vuln_class": "xss",
         "target_file": "fixtures/vulnshop/app.py",
         "sink": "return \"<h1>Results for \" + query + \"</h1>\"",
@@ -483,12 +483,12 @@
         "parameter_name": "q",
         "suggested_payload": "<script>alert(1)</script>",
         "headers": {},
-        "rationale": "The q parameter is directly concatenated into the HTML response without escaping, causing the script payload to be reflected and executed in the victim's browser.",
+        "rationale": "The q parameter is directly concatenated into the HTML response without escaping, causing the browser to execute the injected script payload when the page is rendered.",
         "finding_id": "ac4384d52f8a"
       },
       "evidence": {
-        "evidence_id": "ev-d7e33b370d6d",
-        "plan_id": "plan-978db2b96ddf",
+        "evidence_id": "ev-f8f4609299a3",
+        "plan_id": "plan-caf269ab620b",
         "payload": "<script>alert(1)</script>",
         "request": {
           "endpoint": "/search",
@@ -501,12 +501,12 @@
         "target_marker": "<script>alert(1)</script>",
         "matched_text": "<script>alert(1)</script>",
         "sandbox_branch_id": null,
-        "execution_time_ms": 360.0266670109704,
-        "timestamp": "2026-10-29T17:00:25.175266+00:00",
+        "execution_time_ms": 1069.0155420161318,
+        "timestamp": "2026-10-29T17:13:48.915762+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-9cd0b36c38fa",
+        "verdict_id": "v-15c3d309e87e",
         "finding_id": "ac4384d52f8a",
         "status": "CONFIRMED",
         "score": 80.0,
@@ -528,7 +528,7 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-4dd03c708920",
+        "fix_id": "fix-85bdfd757bd3",
         "finding_id": "ac4384d52f8a",
         "hunks": [
           {
@@ -543,7 +543,7 @@
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
-        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: <h1>Results for &lt;script&gt;alert(1)&lt;/script&gt;</h1>\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.04s\n"
+        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: <h1>Results for &lt;script&gt;alert(1)&lt;/script&gt;</h1>\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"
       },
       "grounding": {
         "finding_id": "ac4384d52f8a",
@@ -591,7 +591,7 @@
       "severity": "HIGH",
       "cve_id": null,
       "cwe_id": "CWE-79",
-      "created_at": "2026-10-29T17:00:19.435624+00:00"
+      "created_at": "2026-10-29T17:13:42.220634+00:00"
     }
   ],
   "findings_count": 5,

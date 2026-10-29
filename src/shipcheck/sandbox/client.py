@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 import re
+import shutil
 import time
 from typing import Any, AsyncIterator, Callable, Dict, Optional, Set, Union
 from jinja2 import Template
@@ -12,6 +13,7 @@ from jinja2 import Template
 from shipcheck import config
 from shipcheck.sandbox.base import SandboxBase, SandboxResult
 from shipcheck.sandbox.contree_backend import ContreeBackend
+from shipcheck.sandbox.docker_backend import DockerBackend
 from shipcheck.sandbox.local_docker_backend import LocalDockerBackend
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,11 @@ class SandboxClient:
                     err,
                 )
                 return LocalDockerBackend(root_dir=image_or_dir)
+        elif self.backend_type == "docker":
+            if shutil.which("docker") is None:
+                logger.warning("docker CLI not found. Falling back to LocalDockerBackend.")
+                return LocalDockerBackend(root_dir=image_or_dir)
+            return DockerBackend(image=str(image_or_dir) if image_or_dir else None)
         else:
             return LocalDockerBackend(root_dir=image_or_dir)
 

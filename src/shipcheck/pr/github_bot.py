@@ -22,6 +22,10 @@ from shipcheck.pr.body import branch_name, pr_title, render_pr_body
 logger = logging.getLogger(__name__)
 
 
+# Marks commits the bot made, so a re-scan only rewrites a branch nobody else touched.
+BOT_COMMIT_TRAILER = "Applied by ShipCheck."
+
+
 class PRBotError(RuntimeError):
     """Raised when the PR cannot be opened (bad config, patch no longer applies)."""
 
@@ -84,9 +88,12 @@ class GitHubPRBot:
         head = branch_name(finding)
         body = render_pr_body(finding, repo=self.repo)
 
-        # Dedupe: update the body if a PR for this head is already open.
+        msg = commit_message or f"{pr_title(finding)}\n\n{BOT_COMMIT_TRAILER}"
+
+        # Dedupe: one PR per head. On a re-scan, refresh it with the latest fix.
         existing = await self._find_open_pr(client, head)
         if existing:
+            await self._refresh(client, existing, head, base, finding, msg)
             await client.patch(
                 f"/repos/{self.repo}/pulls/{existing['number']}", json={"body": body}
             )
@@ -103,7 +110,6 @@ class GitHubPRBot:
             raise PRBotError(f"Could not create branch {head}: {ref_resp.status_code} {ref_resp.text}")
 
         # Apply the fix hunks file by file through the Contents API.
-        msg = commit_message or f"{pr_title(finding)}\n\nApplied by ShipCheck."
         for file_path, hunks in self._hunks_by_file(finding).items():
             await self._patch_file(client, file_path, hunks, head, msg)
 
@@ -131,6 +137,65 @@ class GitHubPRBot:
             grouped.setdefault(h.file, []).append(h)
         return grouped
 
+    async def _refresh(self, client, existing: Dict[str, Any], head: str, base: str,
+                       finding: Finding, msg: str) -> None:
+        """Make the PR branch show exactly base + the newest verified fix.
+
+        Builds one new commit on top of the current head whose tree is the base
+        tree with the fix applied, then fast-forwards the branch to it. The branch
+        is never reset (GitHub auto-closes a PR whose head has no commits) and
+        history is never rewritten. Skipped if a human pushed to the branch:
+        their work is kept and only the PR body is updated.
+        """
+        base_ref = (existing.get("base") or {}).get("ref") or base
+        cmp = await client.get(f"/repos/{self.repo}/compare/{base_ref}...{head}")
+        if cmp.status_code != 200:
+            logger.warning("Could not compare %s...%s (%s); leaving branch as is.", base_ref, head, cmp.status_code)
+            return
+        commits = cmp.json().get("commits", [])
+        if any(BOT_COMMIT_TRAILER not in c.get("commit", {}).get("message", "") for c in commits):
+            logger.info("PR branch %s has non-ShipCheck commits; updating the body only.", head)
+            return
+
+        base_sha = await self._base_sha(client, base_ref)
+        head_sha = await self._base_sha(client, head)
+        base_commit = await client.get(f"/repos/{self.repo}/git/commits/{base_sha}")
+        if base_commit.status_code != 200:
+            raise PRBotError(f"Could not read base commit {base_sha}: {base_commit.status_code}")
+
+        entries = []
+        for file_path, hunks in self._hunks_by_file(finding).items():
+            resp = await client.get(f"/repos/{self.repo}/contents/{file_path}", params={"ref": base_sha})
+            if resp.status_code != 200:
+                raise PRBotError(f"Could not read '{file_path}' on {base_ref}: {resp.status_code}")
+            content = base64.b64decode(resp.json()["content"]).decode("utf-8", "replace")
+            for h in hunks:
+                content, ok, reason = h.apply_to_text(content)
+                if not ok:
+                    raise PRBotError(f"Patch no longer applies to '{file_path}': {reason}")
+            blob = await client.post(f"/repos/{self.repo}/git/blobs",
+                                     json={"content": content, "encoding": "utf-8"})
+            if blob.status_code not in (200, 201):
+                raise PRBotError(f"Could not create blob for '{file_path}': {blob.status_code}")
+            entries.append({"path": file_path, "mode": "100644", "type": "blob", "sha": blob.json()["sha"]})
+
+        tree = await client.post(f"/repos/{self.repo}/git/trees",
+                                 json={"base_tree": base_commit.json()["tree"]["sha"], "tree": entries})
+        if tree.status_code not in (200, 201):
+            raise PRBotError(f"Could not create tree: {tree.status_code} {tree.text}")
+        head_commit = await client.get(f"/repos/{self.repo}/git/commits/{head_sha}")
+        if head_commit.status_code == 200 and head_commit.json().get("tree", {}).get("sha") == tree.json()["sha"]:
+            logger.info("PR branch %s already holds this fix; no new commit.", head)
+            return
+        commit = await client.post(f"/repos/{self.repo}/git/commits",
+                                   json={"message": msg, "tree": tree.json()["sha"], "parents": [head_sha]})
+        if commit.status_code not in (200, 201):
+            raise PRBotError(f"Could not create commit: {commit.status_code} {commit.text}")
+        ff = await client.patch(f"/repos/{self.repo}/git/refs/heads/{head}",
+                                json={"sha": commit.json()["sha"], "force": False})
+        if ff.status_code != 200:
+            raise PRBotError(f"Could not update {head}: {ff.status_code} {ff.text}")
+
     async def _find_open_pr(self, client, head: str) -> Optional[Dict[str, Any]]:
         resp = await client.get(
             f"/repos/{self.repo}/pulls",
@@ -153,10 +218,13 @@ class GitHubPRBot:
             raise PRBotError(f"Could not read '{file_path}' on {head}: {resp.status_code}")
         data = resp.json()
         content = base64.b64decode(data["content"]).decode("utf-8", "replace")
+        original = content
         for h in hunks:
             content, ok, reason = h.apply_to_text(content)
             if not ok:
                 raise PRBotError(f"Patch no longer applies to '{file_path}': {reason}")
+        if content == original:
+            return
         put = await client.put(
             f"/repos/{self.repo}/contents/{file_path}",
             json={

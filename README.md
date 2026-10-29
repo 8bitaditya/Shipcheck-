@@ -94,14 +94,14 @@ What is in the `draft` branch today, and what still needs building.
 | Probe harness | `probes/harness.py`, `probes/markers.py` | ✅ Built for 4 classes: SQLi, command injection, path traversal, reflected XSS. Payloads are shell-quoted and URL-encoded, so quoted SQLi like `' OR 1=1--` is delivered intact (14 tests in `test_probe_harness.py`) |
 | Risk scoring | `contracts/verdict.py`, `scoring/reachability.py` | ✅ Built (`compute_risk_score`, reachability heuristic) |
 | Advisory grounding (FR-5) | `planning/tavily_client.py`, `contracts/grounding.py` | ✅ Built. Every confirmed finding gets Tavily-grounded CVE/GHSA/CWE IDs, affected versions (dependency findings) and the canonical fix, shown on the dashboard and in the PR body. Without a key it uses a built-in CWE/OWASP reference and labels it as offline. 6 tests |
-| Sandboxes | `sandbox/` | ✅ Built. Local backend used for every real run so far. ConTree backend: uploads, paths and image tracking fixed and tested against a fake image (3 tests), but **not yet run live**: the current Nebius key gets `403 Insufficient permissions` from the Sandboxes API. 9 + 3 tests |
+| Sandboxes | `sandbox/` | ✅ Built. Three backends: **docker** (one container per sandbox from the probe image; `fork()` = `docker commit` snapshot), local temp-dir, and **ConTree**. The golden run was recorded on docker. ConTree: uploads, paths and image tracking fixed and tested against a fake image, but **not run live** — Sandboxes is in beta and this key's `/v1/whoami` shows every permission `false` until Nebius grants access. 9 + 3 + 4 (opt-in Docker) tests |
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
 | Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
 | Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. If a patch doesn't apply, Super is asked again (up to 2 more times), told why and shown the closest real text. 14 tests |
 | End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → ground → rectify, probes fan out one forked sandbox per plan behind a semaphore, and (opt-in `open_prs=True`) opens a draft PR per verified fix. Returns a `ScanResult`. 10 tests |
 | Demo fixture | `fixtures/vulnshop/` | ✅ Built. A Flask app with one real bug per class (SQLi, CMDi, traversal, XSS); the probe harness exploits it live (see the live test) |
-| PR bot (FR-7) | `pr/github_bot.py` | ✅ Built. Opens a **draft** PR with an evidence body on a `shipcheck/fix-*` branch, only for a `VERIFIED_PASSED` fix, dedupes by head ref, never merges. 5 tests |
-| Golden-run replay | `golden/`, `golden.py`, `scripts/record_golden.py` | ✅ Built. A recorded real scan of `vulnshop` (4 of 4 confirmed and fixed, real triage, Ultra plans, Super fixes, live Tavily), redacted, replayed by `GET /api/demo` (header `X-ShipCheck-Demo-Source: golden`). See [golden/README.md](golden/README.md) |
+| PR bot (FR-7) | `pr/github_bot.py` | ✅ Built and used for real ([8bitaditya/Shipcheck-#1](https://github.com/8bitaditya/Shipcheck-/pull/1)). Opens a **draft** PR with an evidence body on a `shipcheck/fix-*` branch, only for a `VERIFIED_PASSED` fix, never merges. A re-scan refreshes the same PR: one fast-forward commit making the branch equal base + the newest fix, skipped if a human has pushed to the branch. 7 tests |
+| Golden-run replay | `golden/`, `golden.py`, `scripts/record_golden.py` | ✅ Built. A recorded real scan of `vulnshop` in probe-image containers (4 of 4 confirmed and fixed, real triage, Ultra plans, Super fixes, live Tavily), redacted, replayed by `GET /api/demo` (header `X-ShipCheck-Demo-Source: golden`). See [golden/README.md](golden/README.md) |
 | API + dashboard (FR-8) | `api/main.py`, `api/dashboard.py` | ✅ Built. FastAPI app: `POST /scan`, `GET /api/demo`, `GET /health`, and a lean single-page dashboard (risk-ranked verdicts, evidence timeline, fix diff, gate state, PR link). 6 tests |
 
 **Vulnerability classes:** the contracts define 10 (`sqli`, `cmdi`, `traversal`, `xss`, `ssrf`, `ssti`, `idor`, `deserialization`, `secrets`, `deps`, plus `other`). The probe harness can currently execute **4** of them (SQLi, CMDi, traversal, XSS) — the same four `vulnshop` demonstrates. The other classes have templates in `CANONICAL_ATTACK_TEMPLATES` but no probe yet.
@@ -134,7 +134,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **121 passed, 6 skipped** (26 contract + 9 sandbox + 3 ConTree-backend + 22 probe-harness + 7 triage + 7 planner + 6 grounding + 19 rectification + 11 orchestrator + 5 PR-bot + 6 API tests; the 6 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **123 passed, 10 skipped** (26 contract + 9 sandbox + 3 ConTree-backend + 22 probe-harness + 7 triage + 7 planner + 6 grounding + 19 rectification + 11 orchestrator + 7 PR-bot + 6 API tests; the 6 live vulnshop tests and 4 Docker tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
 
 ### Run the dashboard
 
@@ -185,10 +185,18 @@ pip install semgrep pip-audit
 brew install gitleaks osv-scanner
 ```
 
-**Re-record the golden run** after changing the pipeline (needs the keys and scanners above):
+**Docker sandboxes (closest to ConTree today).** Build the probe image once (≈1.6 GB, `linux/amd64`; slow under emulation on Apple Silicon), then select the backend:
 
 ```bash
-python scripts/record_golden.py
+docker build --platform linux/amd64 -t shipcheck-probe:latest -f src/shipcheck/sandbox/image/Dockerfile.probe src/shipcheck/sandbox/image
+SANDBOX_BACKEND=docker uvicorn shipcheck.api.main:app --port 8000
+SHIPCHECK_DOCKER=1 pytest tests/test_docker_backend.py -v
+```
+
+**Re-record the golden run** after changing the pipeline (needs the keys; `--backend docker` needs the probe image, the default local backend needs the scanners above):
+
+```bash
+python scripts/record_golden.py --backend docker
 ```
 
 ### 4. Use the stages from Python
@@ -336,7 +344,7 @@ Shipcheck-/
 
 All eight functional requirements are built. What remains is hardening and the demo:
 
-1. **Run on ConTree:** blocked on access. The Nebius key works for the Nemotron models, but the Sandboxes API answers `403 Insufficient permissions` for listing and importing images. Once Sandboxes access is granted: import a base image, build the probe image from `sandbox/image/Dockerfile.probe`, set `SHIPCHECK_PROBE_IMAGE_UUID` and `SANDBOX_BACKEND=contree`, then re-record the golden run.
+1. **Run on ConTree:** blocked on access. Sandboxes is in beta; request access at [tokenfactory.nebius.com/sandboxes/about](https://tokenfactory.nebius.com/sandboxes/about) (or contree@nebius.com). Until then `GET /v1/whoami` lists every permission as `false`. Once granted: import the probe image, set `SHIPCHECK_PROBE_IMAGE_UUID` and `SANDBOX_BACKEND=contree`, then `python scripts/record_golden.py --backend contree`.
 2. **Deploy** the dashboard/API to a Nebius Serverless Endpoint and warm it before judging.
 3. Tests for the probe markers; Semgrep-taint reachability; the Nano tier.
 

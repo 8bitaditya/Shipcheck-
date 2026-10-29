@@ -25,7 +25,7 @@ GOLDEN_PATH = Path(
 
 _ID_OUTPUT = [
     # `id` output from the command-injection probe names the local user and groups
-    (re.compile(r"\b(uid|gid)=(\d+)\([^)]*\)"), r"\1=\2(sandbox)"),
+    (re.compile(r"\b(uid|gid)=(\d+)\((?!root\))[^)]*\)"), r"\1=\2(sandbox)"),  # root is not personal
     (re.compile(r"\bgroups=[^\s\"<\\]+"), "groups=<redacted>"),
     # local sandbox temp dirs
     (re.compile(r"(?:/private)?/var/folders/[^\s\"'\\]+?/shipcheck_sandbox_\w+"), "<sandbox>"),

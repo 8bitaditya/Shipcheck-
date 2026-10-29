@@ -28,6 +28,9 @@ class SandboxBase(ABC):
         """
         return "/workspace"
 
+    def cleanup(self) -> None:
+        """Release resources held by this sandbox (temp dirs, containers). Default: none."""
+
     @abstractmethod
     async def run(
         self,

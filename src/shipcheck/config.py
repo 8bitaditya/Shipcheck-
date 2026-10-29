@@ -59,4 +59,10 @@ OVERALL_SCAN_BUDGET_OPS: int = int(os.getenv("OVERALL_SCAN_BUDGET_OPS", "50"))
 
 # Backend selectors: 'contree', 'docker', 'mock'
 SANDBOX_BACKEND: str = os.getenv("SANDBOX_BACKEND", "mock").lower()
+
+# 'docker' backend: one container per sandbox from the probe image
+# (build: docker build --platform linux/amd64 -t shipcheck-probe:latest -f
+#  src/shipcheck/sandbox/image/Dockerfile.probe src/shipcheck/sandbox/image)
+SHIPCHECK_DOCKER_IMAGE: str = os.getenv("SHIPCHECK_DOCKER_IMAGE", "shipcheck-probe:latest")
+SHIPCHECK_DOCKER_PLATFORM: str = os.getenv("SHIPCHECK_DOCKER_PLATFORM", "")
 LLM_BACKEND: str = os.getenv("LLM_BACKEND", "mock").lower()

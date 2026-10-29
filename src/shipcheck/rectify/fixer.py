@@ -182,6 +182,19 @@ class RectificationEngine:
 
         # Re-verify in a child branch so the original (vulnerable) state is untouched.
         child = await sandbox.fork()
+        try:
+            return await self._verify_in_child(
+                patch, finding, plan, sandbox, child, patched_files, rejections,
+                app_cmd=app_cmd, target_dir=target_dir, test_cmd=test_cmd,
+            )
+        finally:
+            child.cleanup()
+
+    async def _verify_in_child(
+        self, patch, finding, plan, sandbox, child, patched_files, rejections,
+        *, app_cmd, target_dir, test_cmd,
+    ) -> FixPatch:
+        """Apply the patch in the forked child, re-attack it and run the repo tests."""
         await child.apply_files(patched_files)
 
         reprobe = await self.harness.execute_step(

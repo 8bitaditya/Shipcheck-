@@ -124,10 +124,13 @@ class ShipCheckScanner:
         async def _probe(plan: AttackPlan):
             async with sem:
                 child = await sandbox.fork()
-                evidence = await self.harness.execute_step(
-                    child, plan, app_cmd=app_cmd,
-                    target_dir=rebase_workdir(target_dir, sandbox, child),
-                )
+                try:
+                    evidence = await self.harness.execute_step(
+                        child, plan, app_cmd=app_cmd,
+                        target_dir=rebase_workdir(target_dir, sandbox, child),
+                    )
+                finally:
+                    child.cleanup()
                 return plan, evidence
 
         probe_pairs = await asyncio.gather(*[_probe(p) for p in batch.plans])
