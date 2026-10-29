@@ -89,7 +89,9 @@ async def test_live_cmdi_marker_fires():
         vuln_class=VulnClass.CMDI, target_file="app.py", sink="subprocess.run",
         payload_strategy="shell separator", expected_marker="uid=",
         route="/export", http_method="GET", parameter_name="ip",
-        suggested_payload="8.8.8.8; id",
+        # loopback only: GitHub-hosted runners block outbound ICMP, so pinging a
+        # public IP hangs until vulnshop's 5s timeout and `id` never runs
+        suggested_payload="127.0.0.1; id",
     )
     evidence = await _run_probe(plan)
     assert evidence.marker_found, evidence.response_excerpt
