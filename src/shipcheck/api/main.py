@@ -17,7 +17,7 @@ import socket
 import sys
 from typing import Callable, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -111,8 +111,22 @@ async def health() -> Dict[str, str]:
     return {"status": "ok", "service": "shipcheck"}
 
 
+@app.get("/api/config")
+async def api_config() -> Dict[str, bool]:
+    """What the dashboard may offer on this deployment."""
+    return {"public_demo": config.PUBLIC_DEMO}
+
+
 @app.post("/scan", response_model=ScanResult)
 async def scan(req: ScanRequest, runner=Depends(get_scan_runner)) -> ScanResult:
+    if config.PUBLIC_DEMO:
+        # A live scan executes the submitted code and spends Nemotron/Tavily
+        # credits, so a public demo URL must not offer it to anyone.
+        raise HTTPException(
+            status_code=403,
+            detail="Live scans are disabled on the public demo. It replays a recorded real scan "
+                   "(GET /api/demo). Run ShipCheck locally to scan your own code.",
+        )
     return await runner(req)
 
 

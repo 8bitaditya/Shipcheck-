@@ -86,6 +86,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 </main>
 <script>
 const $ = s => document.querySelector(s);
+let publicDemo = false;
 const esc = s => (s==null?"":String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safeUrl = u => /^https?:\/\/[^\s"'<>`]+$/i.test(u||'') ? u : '#';
 function scoreColor(n){ if(n>=70) return '#f85149'; if(n>=40) return '#d29922'; if(n>0) return '#3fb950'; return '#8b98a9'; }
@@ -184,10 +185,19 @@ async function load(url, opts){
     $('#status').textContent = src==='golden' ? 'Replayed a recorded real scan (golden run).'
       : src==='sample' ? 'Showing a hand-built sample (no golden run recorded).' : 'Done.';
   }catch(e){ $('#status').textContent='Error: '+e.message; }
-  finally{ $('#scan').disabled=false; $('#demo').disabled=false; }
+  finally{ $('#scan').disabled=publicDemo; $('#demo').disabled=false; }
 }
 
 $('#demo').onclick = () => load('/api/demo');
+// Public demo deployments: no live scans; open straight onto the recorded run.
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  if (!cfg.public_demo) return;
+  publicDemo = true;
+  $('#scan').disabled = true;
+  $('#scan').title = 'Live scans are disabled on the public demo';
+  $('#diff').disabled = true; $('#files').disabled = true;
+  load('/api/demo');
+}).catch(() => {});
 $('#scan').onclick = () => {
   let files={};
   try{ files = $('#files').value.trim() ? JSON.parse($('#files').value) : {}; }

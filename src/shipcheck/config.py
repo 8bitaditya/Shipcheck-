@@ -60,6 +60,10 @@ OVERALL_SCAN_BUDGET_OPS: int = int(os.getenv("OVERALL_SCAN_BUDGET_OPS", "50"))
 # Backend selectors: 'contree', 'docker', 'mock'
 SANDBOX_BACKEND: str = os.getenv("SANDBOX_BACKEND", "mock").lower()
 
+# Public demo deployments: POST /scan is disabled (it runs uploaded code and
+# spends model/search credits) and the dashboard replays the golden run.
+PUBLIC_DEMO: bool = os.getenv("SHIPCHECK_PUBLIC_DEMO", "").lower() in ("1", "true", "yes")
+
 # 'docker' backend: one container per sandbox from the probe image
 # (build: docker build --platform linux/amd64 -t shipcheck-probe:latest -f
 #  src/shipcheck/sandbox/image/Dockerfile.probe src/shipcheck/sandbox/image)

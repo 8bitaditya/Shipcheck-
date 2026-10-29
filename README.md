@@ -134,7 +134,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **127 passed, 10 skipped** (26 contract + 9 sandbox + 3 ConTree-backend + 22 probe-harness + 7 triage + 8 planner + 6 grounding + 21 rectification + 12 orchestrator + 7 PR-bot + 6 API tests; the 6 live vulnshop tests and 4 Docker tests skip unless opted in). With `SHIPCHECK_LIVE=1 SHIPCHECK_DOCKER=1`: 137 passed. CI runs every file on Python 3.11 and 3.12, live vulnshop exploits included.
+Expected: **129 passed, 10 skipped** (26 contract + 9 sandbox + 3 ConTree-backend + 22 probe-harness + 7 triage + 8 planner + 6 grounding + 21 rectification + 12 orchestrator + 7 PR-bot + 8 API tests; the 6 live vulnshop tests and 4 Docker tests skip unless opted in). With `SHIPCHECK_LIVE=1 SHIPCHECK_DOCKER=1`: 139 passed. CI runs every file on Python 3.11 and 3.12, live vulnshop exploits included.
 
 ### Run the dashboard
 
@@ -143,6 +143,16 @@ uvicorn shipcheck.api.main:app --port 8000
 ```
 
 Open [http://localhost:8000](http://localhost:8000) and click **Load demo** to replay the recorded real scan of `vulnshop` from `golden/` — the risk-ranked verdict, the evidence timeline (exploit lands → fix → attack fails), the fix diff, the "No PASS, No PR" gate and the draft-PR link. Or build the container: `docker build -t shipcheck . && docker run -p 8000:8000 shipcheck`.
+
+### Public demo deployment
+
+`SHIPCHECK_PUBLIC_DEMO=1` (baked in with `docker build --build-arg PUBLIC_DEMO=1`) turns the app into a safe public demo. The dashboard opens straight onto the recorded real scan, and `POST /scan` returns 403, because a live scan runs the submitted code and spends Nemotron and Tavily credits. The image contains no API keys. To deploy it to a Nebius AI Cloud serverless endpoint (after `nebius profile create`):
+
+```bash
+REGION_ID=eu-north1 scripts/deploy_nebius.sh
+```
+
+Submission material (video script, Devpost text, tooling feedback) is in [docs/submission/](docs/submission/).
 
 ### Run the live exploit demo
 

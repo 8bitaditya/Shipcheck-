@@ -93,3 +93,26 @@ def test_scan_uses_injected_runner(client):
     assert body["findings_count"] == 1
     assert body["overall_risk_score"] == 4.0
     assert body["findings"][0]["vuln_class"] == "xss"
+
+
+
+def test_public_demo_disables_live_scans(client, monkeypatch):
+    from shipcheck import config
+    monkeypatch.setattr(config, "PUBLIC_DEMO", True)
+    called = []
+
+    async def runner(req):
+        called.append(req)
+
+    app.dependency_overrides[get_scan_runner] = lambda: runner
+    try:
+        resp = client.post("/scan", json={"diff": "d", "source_files": {"app.py": "x"}})
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 403 and called == []
+    assert client.get("/api/config").json() == {"public_demo": True}
+    assert client.get("/api/demo").status_code == 200  # the replay still works
+
+
+def test_live_scans_allowed_by_default(client):
+    assert client.get("/api/config").json() == {"public_demo": False}

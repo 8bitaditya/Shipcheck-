@@ -23,7 +23,9 @@ COPY golden/ /app/golden/
 # Install package in editable mode
 RUN pip install --no-cache-dir -e .
 
-ENV PYTHONUNBUFFERED=1 HOST=0.0.0.0 PORT=8000
+# --build-arg PUBLIC_DEMO=1 for a public URL: disables POST /scan (see config.PUBLIC_DEMO)
+ARG PUBLIC_DEMO=0
+ENV PYTHONUNBUFFERED=1 HOST=0.0.0.0 PORT=8000 SHIPCHECK_PUBLIC_DEMO=${PUBLIC_DEMO}
 EXPOSE 8000
 
 # Serve the ShipCheck dashboard + API (FR-8).
