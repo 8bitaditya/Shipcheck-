@@ -320,3 +320,17 @@ async def test_grounding_error_falls_back_without_failing_scan():
     assert g is not None and g.provider == "static" and not g.is_live
     assert "CWE-89" in g.advisory_ids
     assert result.fixed_count == 1  # rest of the pipeline still ran
+
+
+async def test_plan_finding_id_beats_file_and_class_matching():
+    first = _finding(VulnClass.XSS, "app.py", "/export")
+    second = _finding(VulnClass.XSS, "app.py", "/search")
+    plan = _plan(VulnClass.XSS, "app.py", "/search", "<script>")
+    plan.finding_id = second.finding_id
+    scanner = _scanner([first, second], [plan], marker_found=True, rectifier=StubRectifier())
+
+    result = await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"})
+
+    by_id = {f.finding_id: f for f in result.findings}
+    assert by_id[second.finding_id].probe is plan
+    assert by_id[first.finding_id].probe is None

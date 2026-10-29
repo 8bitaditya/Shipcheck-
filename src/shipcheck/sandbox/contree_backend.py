@@ -96,10 +96,10 @@ class ContreeBackend(SandboxBase):
             command=command,
             shell=shell,
             env=env,
-            cwd=cwd,
+            cwd=self._abs(cwd) if cwd else self.default_workdir,
             timeout=timeout,
             disposable=disposable,
-            files=files,
+            files=self._upload_spec(files) if files else None,
         )
 
         duration = time.monotonic() - start_time
@@ -134,18 +134,42 @@ class ContreeBackend(SandboxBase):
         return str(getattr(img, "uuid", tag or "unknown"))
 
     async def read_file(self, remote_path: str) -> bytes:
-        """Read artifact bytes from sandbox."""
+        """Read artifact bytes from sandbox (relative paths are under /workspace)."""
         img = await self._get_image()
-        return await img.read(remote_path)
+        return await img.read(self._abs(remote_path))
 
     async def download_file(self, remote_path: str, local_path: Union[str, Path]) -> Path:
         """Download artifact from sandbox to local filesystem."""
         img = await self._get_image()
         target = Path(local_path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        return await img.download(remote_path, target)
+        return await img.download(self._abs(remote_path), target)
 
     async def apply_files(self, files: Dict[str, Union[str, bytes, Path]]) -> None:
-        """Upload or update files inside the sandbox image."""
+        """Upload or update files inside the sandbox image.
+
+        ConTree images are immutable: apply_files returns a NEW image with the
+        files baked in, so this sandbox must move to it (the old code dropped it,
+        so uploads never took effect).
+        """
         img = await self._get_image()
-        await img.apply_files(files)
+        self._image = await img.apply_files(self._upload_spec(files))
+
+    def _abs(self, path: str) -> str:
+        """Resolve a repo-relative path against the sandbox working dir."""
+        if path.startswith("/"):
+            return path
+        return f"{self.default_workdir}/{path.removeprefix('./')}"
+
+    def _upload_spec(self, files: Dict[str, Union[str, bytes, Path]]) -> Dict[str, Union[bytes, Path]]:
+        """Map our {path: content} convention onto the SDK's {dest: source}.
+
+        The SDK treats a str source as a LOCAL FILE PATH, but callers pass file
+        contents as str, so text is encoded to bytes. Path objects stay paths.
+        """
+        spec: Dict[str, Union[bytes, Path]] = {}
+        for dest, content in files.items():
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            spec[self._abs(dest)] = content
+        return spec

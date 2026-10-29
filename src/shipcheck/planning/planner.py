@@ -1,5 +1,6 @@
 """Attack planner leveraging Nemotron-3-Ultra (1M context) and Tavily grounding."""
 
+import difflib
 import json
 import logging
 from pathlib import Path
@@ -76,6 +77,7 @@ class AttackPlanner:
             parameter_name=param,
             suggested_payload=tmpl.get("default_payload", "' OR 1=1--"),
             rationale=f"Heuristic plan for {finding.finding_id} from canonical template",
+            finding_id=finding.finding_id,
         )
 
     async def plan_attacks(
@@ -121,13 +123,18 @@ Generate a structured attack plan batch (AttackPlanBatch JSON).
             logger.warning("LLM planning returned invalid JSON. Using heuristic fallback.")
             batch = AttackPlanBatch(diff_ref=commit_sha, plans=[])
 
-        # Every actionable finding gets a probe: fill gaps the model left with templates.
+        # Fill gaps the model left with templates -- but only where nothing of that
+        # class in that file was planned: a template guesses the route, so for a
+        # second same-class finding it would likely probe (and credit) the wrong one.
+        planned_ids = {p.finding_id for p in batch.plans if p.finding_id}
         covered = {(p.vuln_class, p.target_file) for p in batch.plans}
         llm_count = len(batch.plans)
         for f in actionable_findings:
-            if (f.vuln_class, f.target.file) not in covered:
-                batch.plans.append(self._heuristic_plan(f))
-                covered.add((f.vuln_class, f.target.file))
+            if f.finding_id in planned_ids or (f.vuln_class, f.target.file) in covered:
+                continue
+            batch.plans.append(self._heuristic_plan(f))
+            planned_ids.add(f.finding_id)
+            covered.add((f.vuln_class, f.target.file))
         logger.info(
             "Attack plans: %d from the LLM, %d from canonical templates",
             llm_count, len(batch.plans) - llm_count,
@@ -149,14 +156,23 @@ Generate a structured attack plan batch (AttackPlanBatch JSON).
 
     @staticmethod
     def _match_finding(raw: Dict[str, Any], vuln_class: VulnClass, findings: List[Finding]) -> Optional[Finding]:
+        """The triage finding a raw plan targets: by id, else the closest same-class sink."""
         by_id = next((f for f in findings if f.finding_id == raw.get("finding_id")), None)
         if by_id:
             return by_id
         same_class = [f for f in findings if f.vuln_class == vuln_class]
         target = raw.get("target_file")
-        return next((f for f in same_class if f.target.file == target), None) or (
-            same_class[0] if same_class else None
-        )
+        candidates = [f for f in same_class if f.target.file == target] or same_class
+        if len(candidates) <= 1:
+            return candidates[0] if candidates else None
+        # Several candidates: pick the one whose code best matches the plan's sink/route.
+        hint = f"{raw.get('sink') or ''} {raw.get('route') or raw.get('target_endpoint') or ''}"
+
+        def similarity(f: Finding) -> float:
+            code = f"{f.target.sink or ''} {f.target.code_snippet or ''} {f.target.endpoint or ''}"
+            return difflib.SequenceMatcher(None, hint, code).ratio()
+
+        return max(candidates, key=similarity)
 
     def _normalize_plan(self, raw: Dict[str, Any], findings: List[Finding]) -> Dict[str, Any]:
         """Map legacy keys onto AttackPlan and fill gaps from the matching finding/template."""
@@ -177,6 +193,7 @@ Generate a structured attack plan batch (AttackPlanBatch JSON).
             plan["http_method"] = plan["http_method"].upper()
 
         finding = self._match_finding(plan, vuln_class, findings)
+        plan["finding_id"] = finding.finding_id if finding else None
         tmpl = CANONICAL_ATTACK_TEMPLATES.get(vuln_class, {})
         _route, method, param = _ROUTE_DEFAULTS.get(vuln_class, ("/", "GET", "q"))
         fills = {
@@ -192,7 +209,7 @@ Generate a structured attack plan batch (AttackPlanBatch JSON).
             if value and not str(plan.get(key) or "").strip():
                 plan[key] = value
         # drop legacy-only keys so they don't leak into the contract
-        for key in ("step_id", "finding_id", "target_endpoint", "suggested_payloads", "payloads", "payload"):
+        for key in ("step_id", "target_endpoint", "suggested_payloads", "payloads", "payload"):
             plan.pop(key, None)
         return plan
 

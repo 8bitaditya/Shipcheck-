@@ -40,6 +40,14 @@ jobs:
       run: |
         pytest tests/test_probe_harness.py -v
 
+    - name: Run triage tests
+      run: |
+        pytest tests/test_triage.py -v
+
+    - name: Run ConTree backend tests (fake image)
+      run: |
+        pytest tests/test_contree_backend.py -v
+
     - name: Run attack planner tests
       run: |
         pytest tests/test_planner.py -v

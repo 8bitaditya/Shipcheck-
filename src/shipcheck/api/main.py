@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,7 @@ from shipcheck.contracts.evidence import Evidence
 from shipcheck.contracts.finding import Finding, FindingTarget
 from shipcheck.contracts.fix import DiffHunk, FixPatch, FixStatus
 from shipcheck.contracts.verdict import SeverityLevel, VerdictCard
+from shipcheck.golden import load_golden
 from shipcheck.orchestrator import ScanResult, ShipCheckScanner
 from shipcheck.planning.tavily_client import TavilyGroundingClient
 from shipcheck.sandbox.client import SandboxClient
@@ -77,9 +78,15 @@ async def scan(req: ScanRequest, runner=Depends(get_scan_runner)) -> ScanResult:
 
 
 @app.get("/api/demo", response_model=ScanResult)
-async def demo() -> ScanResult:
-    """A recorded sample result so the dashboard is watchable without a live scan."""
-    return _demo_result()
+async def demo(response: Response) -> ScanResult:
+    """Replay the recorded real scan (golden/), so the demo never needs a live call.
+
+    Falls back to a hand-built sample if no recording is present. The
+    X-ShipCheck-Demo-Source header says which one was served.
+    """
+    golden = load_golden()
+    response.headers["X-ShipCheck-Demo-Source"] = "golden" if golden else "sample"
+    return golden or _demo_result()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -88,7 +95,7 @@ async def dashboard() -> str:
 
 
 def _demo_result() -> ScanResult:
-    """Build one confirmed-and-fixed SQLi finding end to end, for the demo view."""
+    """Hand-built fallback (one confirmed-and-fixed SQLi) used when golden/ is absent."""
     finding = Finding(
         vuln_class=VulnClass.SQLI,
         title="SQL injection in login handler",

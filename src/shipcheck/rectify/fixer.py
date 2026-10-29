@@ -274,6 +274,13 @@ class RectificationEngine:
                     return None
 
             new_content, ok, reason = hunk.apply_to_text(patched_files[hunk.file])
+            if not ok and "not found" in reason:
+                repaired = RectificationEngine._repair_trailing_artifact(hunk, patched_files[hunk.file])
+                if repaired is not None:
+                    new_content, ok, reason = repaired.apply_to_text(patched_files[hunk.file])
+                    if ok:
+                        logger.info("Repaired trailing artifact in fix hunk for %s", hunk.file)
+                        hunk.search, hunk.replace = repaired.search, repaired.replace
             if not ok:
                 patch.status = (
                     FixStatus.REJECTED_AMBIGUOUS_MATCH
@@ -284,3 +291,36 @@ class RectificationEngine:
                 return None
             patched_files[hunk.file] = new_content
         return patched_files
+
+    @staticmethod
+    def _repair_trailing_artifact(hunk: DiffHunk, content: str) -> Optional[DiffHunk]:
+        """Undo a known model quirk: stray `,` `>` `;` appended to the hunk's last line.
+
+        Nemotron Super repeatedly emitted `return "...</h1>">` (or `",`) for a line
+        ending in `"</h1>"`, even when shown the real text. Only that exact shape is
+        repaired: every other line must match verbatim, the stray suffix must be
+        1-2 of `,>;`, the real block must occur exactly once, and the same suffix
+        must end the replace text (it was copied there too). The patch still has to
+        pass the re-attack and the repo tests like any other.
+        """
+        search = hunk.search.rstrip("\n")
+        lines = search.split("\n")
+        last = lines[-1]
+        stripped = last.rstrip(",>;")
+        suffix = last[len(stripped):]
+        if not suffix or len(suffix) > 2:
+            return None
+        real = "\n".join(lines[:-1] + [stripped])
+        if content.count(real) != 1:
+            return None
+        replace = hunk.replace.rstrip("\n")
+        if not replace.endswith(suffix):
+            return None
+        trailing_nl = "\n" if hunk.search.endswith("\n") and (real + "\n") in content else ""
+        replace_nl = "\n" if hunk.replace.endswith("\n") else ""
+        return DiffHunk(
+            file=hunk.file,
+            search=real + trailing_nl,
+            replace=replace[: -len(suffix)] + replace_nl,
+            allow_deletion=hunk.allow_deletion,
+        )

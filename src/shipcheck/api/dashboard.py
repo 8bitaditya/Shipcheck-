@@ -180,7 +180,9 @@ async function load(url, opts){
     const res=await fetch(url, opts);
     if(!res.ok) throw new Error('HTTP '+res.status);
     render(await res.json());
-    $('#status').textContent='Done.';
+    const src=res.headers.get('X-ShipCheck-Demo-Source');
+    $('#status').textContent = src==='golden' ? 'Replayed a recorded real scan (golden run).'
+      : src==='sample' ? 'Showing a hand-built sample (no golden run recorded).' : 'Done.';
   }catch(e){ $('#status').textContent='Error: '+e.message; }
   finally{ $('#scan').disabled=false; $('#demo').disabled=false; }
 }

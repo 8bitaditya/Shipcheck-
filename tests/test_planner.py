@@ -100,3 +100,33 @@ async def test_non_actionable_plans_are_dropped():
             "payload_strategy": "p", "expected_marker": "ami-id"}
     batch = await _planner({"plans": [plan]}).plan_attacks("diff", [SQLI], "sha")
     assert [p.vuln_class for p in batch.plans] == [VulnClass.SQLI]
+
+
+XSS_EXPORT = Finding(vuln_class=VulnClass.XSS, title="xss export", tool="semgrep", rule_id="r",
+                     target=FindingTarget(file="app.py", line=60,
+                                          sink='return "<pre>" + result.stdout + result.stderr'))
+XSS_SEARCH = Finding(vuln_class=VulnClass.XSS, title="xss search", tool="semgrep", rule_id="r",
+                     target=FindingTarget(file="app.py", line=76,
+                                          sink='return "<h1>Results for " + query + "</h1>"'))
+
+
+def _xss_plan(**kw):
+    base = {"vuln_class": "xss", "target_file": "app.py", "payload_strategy": "p",
+            "expected_marker": "<script>alert(1)</script>", "http_method": "GET"}
+    return {**base, **kw}
+
+
+async def test_same_class_findings_are_matched_by_id():
+    payload = {"plans": [_xss_plan(finding_id=XSS_SEARCH.finding_id, sink="x", route="/search"),
+                         _xss_plan(finding_id=XSS_EXPORT.finding_id, sink="y", route="/export")]}
+    batch = await _planner(payload).plan_attacks("diff", [XSS_EXPORT, XSS_SEARCH], "sha")
+    by_route = {p.route: p.finding_id for p in batch.plans}
+    assert by_route == {"/search": XSS_SEARCH.finding_id, "/export": XSS_EXPORT.finding_id}
+
+
+async def test_without_ids_the_closest_sink_wins():
+    """Regression: the /search plan used to be credited to the /export finding."""
+    payload = {"plans": [_xss_plan(sink='return "<h1>Results for " + query', route="/search")]}
+    batch = await _planner(payload).plan_attacks("diff", [XSS_EXPORT, XSS_SEARCH], "sha")
+    assert len(batch.plans) == 1  # no template guess for the other same-class finding
+    assert batch.plans[0].finding_id == XSS_SEARCH.finding_id

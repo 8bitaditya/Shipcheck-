@@ -11,12 +11,16 @@ from shipcheck.contracts.verdict import SeverityLevel
 def _map_vuln_class(rule_id: str, message: str) -> VulnClass:
     """Classify a finding into one of the targeted classes or other."""
     text = f"{rule_id} {message}".lower()
-    if any(k in text for k in ["sqli", "sql-injection", "sqlite", "raw-sql"]):
+    if any(k in text for k in ["sqli", "sql-injection", "sql injection", "sqlite", "raw-sql",
+                               "tainted-sql", "formatted-sql", "sql string"]):
         return VulnClass.SQLI
-    if any(k in text for k in ["command-injection", "shell-true", "subprocess", "exec", "system"]):
-        return VulnClass.CMDI
+    # Traversal before CMDI, and no bare "system"/"exec": "filesystem path" in a
+    # traversal message used to be classified as command injection.
     if any(k in text for k in ["path-traversal", "directory-traversal", "traversal", "send-file"]):
         return VulnClass.TRAVERSAL
+    if any(k in text for k in ["command-injection", "command injection", "shell-true", "subprocess",
+                               "os-system", "os.system", "exec-detected", "dangerous-system-call"]):
+        return VulnClass.CMDI
     if any(k in text for k in ["xss", "cross-site", "unescaped", "reflected"]):
         return VulnClass.XSS
     if any(k in text for k in ["ssrf", "server-side-request"]):
@@ -53,10 +57,15 @@ def parse_sarif_to_findings(sarif_data: Dict[str, Any], tool_name: str) -> List[
 
     for run in runs:
         results = run.get("results", [])
+        # Semgrep puts the severity on the rule, not on each result.
+        rule_levels = {
+            r.get("id"): (r.get("defaultConfiguration") or {}).get("level")
+            for r in (run.get("tool", {}).get("driver", {}).get("rules") or [])
+        }
         for res in results:
             rule_id = res.get("ruleId", "unknown-rule")
             message = res.get("message", {}).get("text", "")
-            level = res.get("level", "warning")
+            level = res.get("level") or rule_levels.get(rule_id) or "warning"
 
             locations = res.get("locations", [])
             file_path = "unknown"
@@ -69,7 +78,7 @@ def parse_sarif_to_findings(sarif_data: Dict[str, Any], tool_name: str) -> List[
                 artifact_uri = phys.get("artifactLocation", {}).get("uri", "")
                 if artifact_uri:
                     # Strip leading file:// or ./
-                    file_path = artifact_uri.replace("file://", "").lstrip("./")
+                    file_path = artifact_uri.replace("file://", "").removeprefix("./")
 
                 region = phys.get("region", {})
                 line_start = region.get("startLine", 1)

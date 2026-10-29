@@ -199,8 +199,9 @@ class ShipCheckScanner:
     ) -> Dict[str, Finding]:
         """Associate each plan with a finding.
 
-        AttackPlan carries no finding_id, so match on (vuln_class, target_file),
-        then fall back to vuln_class alone. Each finding is consumed once.
+        Match on the plan's finding_id when it names a known finding, else on
+        (vuln_class, target_file), then vuln_class alone. Each finding is
+        consumed once.
         """
         by_key: Dict[Tuple, List[Finding]] = {}
         by_class: Dict = {}
@@ -208,12 +209,15 @@ class ShipCheckScanner:
             by_key.setdefault((f.vuln_class, f.target.file), []).append(f)
             by_class.setdefault(f.vuln_class, []).append(f)
 
+        by_id = {f.finding_id: f for f in findings}
         mapping: Dict[str, Finding] = {}
         used: Set[int] = set()
-        for plan in plans:
-            candidates = by_key.get((plan.vuln_class, plan.target_file)) or by_class.get(
-                plan.vuln_class, []
-            )
+        # Plans that name their finding claim it first, so the fallback can't steal it.
+        for plan in sorted(plans, key=lambda p: p.finding_id not in by_id):
+            named = by_id.get(plan.finding_id) if plan.finding_id else None
+            candidates = ([named] if named is not None else []) or by_key.get(
+                (plan.vuln_class, plan.target_file)
+            ) or by_class.get(plan.vuln_class, [])
             chosen = next((f for f in candidates if id(f) not in used), None)
             if chosen is not None:
                 used.add(id(chosen))
@@ -240,6 +244,9 @@ class ShipCheckScanner:
     def _attach_verdict(self, finding: Finding) -> None:
         """Compute and attach a VerdictCard using the reachability + exposure heuristics."""
         marker_verified = finding.is_confirmed
+        # Scanners rarely know the route; a probe that landed over HTTP does.
+        if finding.target.endpoint is None and finding.probe and finding.probe.route and marker_verified:
+            finding.target.endpoint = finding.probe.route
         reach = _reachability_level(ReachabilityAnalyzer.analyze(finding))
         exposure = (
             ExposureLevel.PUBLIC if finding.target.endpoint else ExposureLevel.INTERNAL

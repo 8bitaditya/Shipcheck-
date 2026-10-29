@@ -304,3 +304,35 @@ async def test_retry_feedback_shows_the_real_text_for_a_near_miss():
 
 def test_closest_block_ignores_unrelated_text():
     assert RectificationEngine._closest_block(SOURCE, "completely different text here") is None
+
+
+XSS_SRC = 'def search(query):\n    return "<h1>Results for " + query + "</h1>"\n'
+
+
+@pytest.mark.parametrize("junk", [">", ",", ">;"])
+async def test_stray_trailing_artifact_is_repaired(junk):
+    """The exact shape Super kept emitting for vulnshop's /search line."""
+    bad = {"hunks": [{"file": "app.py",
+                      "search": '    return "<h1>Results for " + query + "</h1>"' + junk,
+                      "replace": '    return "<h1>Results for " + escape(query) + "</h1>"' + junk}]}
+    eng = _engine(llm_payload=bad, marker_found=False)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": XSS_SRC}))
+    assert patch.status == FixStatus.VERIFIED_PASSED
+    assert patch.hunks[0].replace.endswith('escape(query) + "</h1>"')
+
+
+async def test_artifact_repair_needs_matching_replace_suffix():
+    bad = {"hunks": [{"file": "app.py",
+                      "search": '    return "<h1>Results for " + query + "</h1>">',
+                      "replace": '    return "<h1>Results for " + escape(query) + "</h1>"'}]}
+    eng = _engine(llm_payload=bad, marker_found=False)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": XSS_SRC}))
+    assert patch.status == FixStatus.REJECTED_SEARCH_NOT_FOUND
+
+
+async def test_artifact_repair_does_not_touch_other_mismatches():
+    bad = {"hunks": [{"file": "app.py", "search": '    return "<h2>Results" + query>',
+                      "replace": "    x>"}]}
+    eng = _engine(llm_payload=bad, marker_found=False)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": XSS_SRC}))
+    assert patch.status == FixStatus.REJECTED_SEARCH_NOT_FOUND

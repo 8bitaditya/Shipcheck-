@@ -94,6 +94,10 @@ class AttackPlan(BaseModel):
         default=None,
         description="Planner model reasoning explaining why this sink is reachable and exploitable"
     )
+    finding_id: Optional[str] = Field(
+        default=None,
+        description="Triage Finding this plan attacks, so several same-class findings in one file stay distinct"
+    )
 
     @field_validator("vuln_class", mode="before")
     @classmethod

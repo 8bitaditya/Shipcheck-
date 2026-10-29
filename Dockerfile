@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY pyproject.toml README.md ./
 COPY src/ /app/src/
 COPY tests/ /app/tests/
+# Recorded real scan replayed by GET /api/demo (no live calls during judging)
+COPY golden/ /app/golden/
 
 # Install package in editable mode
 RUN pip install --no-cache-dir -e .

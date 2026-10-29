@@ -33,21 +33,40 @@ def test_dashboard_served(client):
     assert 'id="scan"' in resp.text  # the scan button is present
 
 
-def test_demo_returns_confirmed_fixed_finding(client):
+def test_demo_replays_the_golden_run(client):
     resp = client.get("/api/demo")
     assert resp.status_code == 200
+    assert resp.headers["X-ShipCheck-Demo-Source"] == "golden"
     data = resp.json()
-    assert data["findings_count"] == 1
-    assert data["confirmed_count"] == 1
-    assert data["fixed_count"] == 1
-    assert data["pull_requests"][0]["number"] == 7
+    assert data["confirmed_count"] == 4 and data["fixed_count"] == 4
+    classes = {f["vuln_class"] for f in data["findings"] if f["evidence"] and f["evidence"]["marker_found"]}
+    assert classes == {"sqli", "cmdi", "traversal", "xss"}
+    for f in data["findings"]:
+        if f["fix"]:
+            assert f["fix"]["status"] == "VERIFIED_PASSED"
+            assert f["grounding"]["provider"] == "tavily"
+    assert data["pull_requests"][0]["url"].endswith("/pull/1")
+    assert "groups=<redacted>" in resp.text or "groups=" not in resp.text  # recorder redacted
+
+
+def test_demo_falls_back_to_sample_without_golden(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("shipcheck.golden.GOLDEN_PATH", tmp_path / "missing.json")
+    resp = client.get("/api/demo")
+    assert resp.headers["X-ShipCheck-Demo-Source"] == "sample"
+    data = resp.json()
+    assert data["findings_count"] == 1 and data["pull_requests"][0]["number"] == 7
     f = data["findings"][0]
-    assert f["vuln_class"] == "sqli"
-    assert f["verdict"]["score"] > 0
-    assert f["fix"]["recheck_attack_marker_absent"] is True
-    # demo grounding is the offline reference and says so
-    assert f["grounding"]["provider"] == "static"
+    assert f["grounding"]["provider"] == "static"  # sample says it is offline
     assert "CWE-89" in f["grounding"]["advisory_ids"]
+
+
+def test_redaction_strips_local_details():
+    from shipcheck.golden import redact_local_details
+    raw = ("uid=501(alice) gid=20(staff) groups=20(staff),12(everyone) "
+           "/private/var/folders/3q/abc/T/shipcheck_sandbox_x1y2/app.py")
+    out = redact_local_details(raw)
+    assert out.startswith("uid=501(sandbox) gid=20(sandbox) groups=<redacted>")
+    assert "<sandbox>/app.py" in out and "alice" not in out
 
 
 def test_scan_uses_injected_runner(client):
