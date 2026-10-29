@@ -130,3 +130,18 @@ async def test_without_ids_the_closest_sink_wins():
     batch = await _planner(payload).plan_attacks("diff", [XSS_EXPORT, XSS_SEARCH], "sha")
     assert len(batch.plans) == 1  # no template guess for the other same-class finding
     assert batch.plans[0].finding_id == XSS_SEARCH.finding_id
+
+
+
+async def test_source_files_are_in_the_prompt():
+    class Capture(FakeLLM):
+        async def complete_json(self, prompt, system_prompt=None, tier="super", max_tokens=4096):
+            self.prompt = prompt
+            return self.payload
+
+    p = AttackPlanner(llm_client=None, tavily_client=FakeTavily())
+    p.llm = Capture({"plans": []})
+    await p.plan_attacks("tiny diff", [SQLI], "sha",
+                         sources={"app.py": '@app.route("/login", methods=["POST"])'})
+    assert "SOURCE FILES" in p.llm.prompt
+    assert '@app.route("/login", methods=["POST"])' in p.llm.prompt

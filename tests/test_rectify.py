@@ -336,3 +336,41 @@ async def test_artifact_repair_does_not_touch_other_mismatches():
     eng = _engine(llm_payload=bad, marker_found=False)
     patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": XSS_SRC}))
     assert patch.status == FixStatus.REJECTED_SEARCH_NOT_FOUND
+
+
+class GateSandbox(StubSandbox):
+    """Tests fail while the patched file still contains 'broken'."""
+
+    async def fork(self):
+        return GateSandbox(self.files, self.test_exit)
+
+    async def run(self, command=None, *, shell=None, **kw):
+        bad = "broken" in self.files.get("app.py", "")
+        return SandboxResult(exit_code=1 if bad else 0,
+                             stdout="NameError: name 'html' is not defined" if bad else "3 passed", stderr="")
+
+
+async def test_gate_failure_is_retried_with_the_test_output():
+    """Super once used html.escape without importing html; tests caught it."""
+    broken = {"hunks": [{"file": "app.py", "search": VULN_LINE, "replace": "    broken = 1"}]}
+    eng = RectificationEngine(harness=StubHarness(marker_found=False))
+    eng.llm = SequenceLLM(broken, VALID_PAYLOAD)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), GateSandbox({"app.py": SOURCE}))
+
+    assert patch.status == FixStatus.VERIFIED_PASSED
+    assert len(eng.llm.prompts) == 2
+    retry = eng.llm.prompts[1]
+    assert "FAILED verification" in retry and "tests failed" in retry
+    assert "NameError: name 'html' is not defined" in retry
+    assert "attempt 1: patch applied but failed the gate" in patch.verification_log
+
+
+async def test_gate_failures_stay_bounded_and_never_pass():
+    broken = {"hunks": [{"file": "app.py", "search": VULN_LINE, "replace": "    broken = 1"}]}
+    eng = RectificationEngine(harness=StubHarness(marker_found=False), max_regenerations=2)
+    eng.llm = SequenceLLM(broken)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), GateSandbox({"app.py": SOURCE}))
+
+    assert patch.status == FixStatus.VERIFIED_FAILED
+    assert patch.is_verified_for_pr() is False
+    assert len(eng.llm.prompts) == 3

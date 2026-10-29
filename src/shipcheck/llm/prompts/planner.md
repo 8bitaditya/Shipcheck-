@@ -11,7 +11,7 @@ Your objective is to review code changes (PR diffs) and static triage findings (
    - `xss` (Reflected Cross-Site Scripting)
 2. Emit one plan per triage finding you can exploit, and set its `finding_id`. Two findings of the same class (e.g. two XSS sinks on different routes) need two plans. Each plan is ONE HTTP request: the probe sends `suggested_payload` as the value of `parameter_name` to `route` with `http_method`.
 3. Every plan MUST define a deterministic, objective `expected_marker`: a literal substring that appears in the HTTP response body only if the exploit worked (e.g. `root:`, `uid=`, `admin@example.com`, `<script>alert(1)</script>`). Never rely on subjective evaluation.
-4. Use the route, parameter and sink you can see in the diff. Do not invent endpoints.
+4. Take the route, HTTP method, parameter name and sink from the SOURCE FILES (the full files), not just the diff. Do not invent endpoints, parameters or data: a marker must be a string the app really returns when exploited.
 5. The response MUST be a JSON object with this exact schema (an `AttackPlanBatch`):
 
 ```json

@@ -33,7 +33,8 @@ class StubPlanner:
     def __init__(self, batch: AttackPlanBatch):
         self._batch = batch
 
-    async def plan_attacks(self, diff_text, findings, commit_sha="HEAD") -> AttackPlanBatch:
+    async def plan_attacks(self, diff_text, findings, commit_sha="HEAD", sources=None) -> AttackPlanBatch:
+        self.sources = sources
         return self._batch
 
 
@@ -334,3 +335,15 @@ async def test_plan_finding_id_beats_file_and_class_matching():
     by_id = {f.finding_id: f for f in result.findings}
     assert by_id[second.finding_id].probe is plan
     assert by_id[first.finding_id].probe is None
+
+
+
+async def test_planner_gets_full_source_of_affected_files():
+    """Regression: with a one-line diff Ultra guessed routes/params; it now sees the file."""
+    finding = _finding(VulnClass.SQLI, "app.py", "/login")
+    planner = StubPlanner(AttackPlanBatch(plans=[]))
+    scanner = ShipCheckScanner(triage=StubTriage([finding]), planner=planner,
+                               harness=StubHarness(False), rectifier=StubRectifier(),
+                               grounder=StubGrounder())
+    await scanner.scan(StubSandbox(), DIFF, changed_files={"app.py"})
+    assert planner.sources == {"app.py": "a = 1\n"}

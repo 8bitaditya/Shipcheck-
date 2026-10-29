@@ -88,7 +88,8 @@ class TestSandbox(unittest.IsolatedAsyncioTestCase):
         sandbox = LocalDockerBackend()
         try:
             res = await sandbox.run(
-                command="python -c \"import time; time.sleep(10)\"",
+                # sys.executable: macOS has no bare `python` outside a venv
+                command=f"\"{sys.executable}\" -c \"import time; time.sleep(10)\"",
                 timeout=0.5,
             )
             self.assertEqual(res.exit_code, 124)

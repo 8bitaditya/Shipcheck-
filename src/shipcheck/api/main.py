@@ -12,6 +12,9 @@ golden-run replay) can override it without the real sandbox/LLM pipeline.
 
 from __future__ import annotations
 
+import shlex
+import socket
+import sys
 from typing import Callable, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Response
@@ -28,7 +31,10 @@ from shipcheck.contracts.verdict import SeverityLevel, VerdictCard
 from shipcheck.golden import load_golden
 from shipcheck.orchestrator import ScanResult, ShipCheckScanner
 from shipcheck.planning.tavily_client import TavilyGroundingClient
+from shipcheck.probes.harness import ProbeHarness
+from shipcheck.rectify.fixer import RectificationEngine
 from shipcheck.sandbox.client import SandboxClient
+from shipcheck.sandbox.local_docker_backend import LocalDockerBackend
 
 app = FastAPI(title="ShipCheck", version="0.1.0")
 
@@ -44,22 +50,55 @@ class ScanRequest(BaseModel):
     )
     changed_files: Optional[List[str]] = None
     open_prs: bool = False
+    app_cmd: Optional[str] = Field(
+        default=None, description="Command that starts the target app (default: python app.py)"
+    )
+    test_cmd: Optional[str] = Field(
+        default=None, description="Repo test command for the regression gate (default: python -m pytest -q)"
+    )
 
 
 async def default_scan_runner(req: ScanRequest) -> ScanResult:
     """Production scan: materialize the files in a sandbox and run the orchestrator."""
     client = SandboxClient(backend_type=config.SANDBOX_BACKEND)
     sandbox = client.create_sandbox()
-    if req.source_files:
-        await sandbox.apply_files(dict(req.source_files))
-    scanner = ShipCheckScanner()
-    return await scanner.scan(
-        sandbox,
-        req.diff,
-        commit_sha=req.commit_sha,
-        changed_files=set(req.changed_files) if req.changed_files else None,
-        open_prs=req.open_prs,
-    )
+    app_cmd = req.app_cmd or "python app.py"
+    test_cmd = req.test_cmd or "python -m pytest -q"
+    if isinstance(sandbox, LocalDockerBackend):
+        # Local sandboxes share the host network: macOS already listens on
+        # :5000 (AirPlay) and parallel probes would collide, so use one free
+        # port, one probe at a time, and this interpreter (no bare `python`).
+        port = _free_port()
+        py = shlex.quote(sys.executable)
+        app_cmd = f"PORT={port} " + (req.app_cmd or f"{py} app.py")
+        test_cmd = req.test_cmd or f"{py} -m pytest -q"
+        harness = ProbeHarness(port=port)
+        scanner = ShipCheckScanner(
+            harness=harness, rectifier=RectificationEngine(harness=harness), max_concurrent=1
+        )
+    else:
+        # Container / microVM sandboxes each have their own loopback.
+        scanner = ShipCheckScanner()
+    try:
+        if req.source_files:
+            await sandbox.apply_files(dict(req.source_files))
+        return await scanner.scan(
+            sandbox,
+            req.diff,
+            commit_sha=req.commit_sha,
+            changed_files=set(req.changed_files) if req.changed_files else None,
+            app_cmd=app_cmd,
+            test_cmd=test_cmd,
+            open_prs=req.open_prs,
+        )
+    finally:
+        sandbox.cleanup()
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def get_scan_runner() -> Callable[[ScanRequest], "ScanResult"]:

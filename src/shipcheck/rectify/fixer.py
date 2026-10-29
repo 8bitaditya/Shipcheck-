@@ -162,33 +162,50 @@ class RectificationEngine:
             logger.warning("Could not read %s for fix generation: %s", finding.target.file, exc)
             source_text = ""
 
+        # One budget of attempts covers both failure modes: a patch that can't be
+        # applied, and a patch that applies but fails the gate (exploit still
+        # works, or the repo tests break). Each retry is told what went wrong.
         feedback: Optional[str] = None
         rejections: List[str] = []
-        for attempt in range(1 + max(0, self.max_regenerations)):
+        attempts = 1 + max(0, self.max_regenerations)
+        for attempt in range(attempts):
             patch = await self.generate_fix(finding, source_text, feedback=feedback)
             patched_files = await self._apply_hunks(patch, sandbox)
-            if patched_files is not None:
-                break
-            rejections.append(f"attempt {attempt + 1}: {patch.verification_log}")
-            feedback = await self._rejection_feedback(patch, sandbox)
-        else:
-            # Every attempt was rejected before reaching the sandbox.
-            patch.verification_log = "\n".join(rejections)
-            if not patch.hunks:
-                patch.status = FixStatus.VERIFIED_FAILED
-            return patch
+            if patched_files is None:
+                rejections.append(f"attempt {attempt + 1}: {patch.verification_log}")
+                feedback = await self._rejection_feedback(patch, sandbox)
+                continue
 
-        patch.status = FixStatus.APPLIED
-
-        # Re-verify in a child branch so the original (vulnerable) state is untouched.
-        child = await sandbox.fork()
-        try:
-            return await self._verify_in_child(
-                patch, finding, plan, sandbox, child, patched_files, rejections,
-                app_cmd=app_cmd, target_dir=target_dir, test_cmd=test_cmd,
+            patch.status = FixStatus.APPLIED
+            # Re-verify in a child branch so the original (vulnerable) state is untouched.
+            child = await sandbox.fork()
+            try:
+                patch = await self._verify_in_child(
+                    patch, finding, plan, sandbox, child, patched_files, rejections,
+                    app_cmd=app_cmd, target_dir=target_dir, test_cmd=test_cmd,
+                )
+            finally:
+                child.cleanup()
+            if patch.status == FixStatus.VERIFIED_PASSED or attempt == attempts - 1:
+                return patch
+            gate_log = (patch.verification_log or "").split("Re-probe verdict:", 1)[-1]
+            rejections.append(f"attempt {attempt + 1}: patch applied but failed the gate")
+            feedback = (
+                "Your patch applied but FAILED verification, so it was discarded. "
+                + ("The exploit still worked on the patched code. "
+                   if not patch.recheck_attack_marker_absent else "")
+                + ("The repo's tests failed on the patched code. "
+                   if patch.repo_tests_passed is False else "")
+                + "Fix the cause, keep the file importable and complete "
+                + "(add any import you use). Verification output:\n"
+                + "Re-probe verdict:" + gate_log[-1500:]
             )
-        finally:
-            child.cleanup()
+
+        # Every attempt was rejected before reaching the sandbox.
+        patch.verification_log = "\n".join(rejections)
+        if not patch.hunks:
+            patch.status = FixStatus.VERIFIED_FAILED
+        return patch
 
     async def _verify_in_child(
         self, patch, finding, plan, sandbox, child, patched_files, rejections,

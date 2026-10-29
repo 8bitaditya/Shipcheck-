@@ -114,7 +114,8 @@ class ShipCheckScanner:
         logger.info("Triage produced %d findings", len(findings))
 
         # 2. Plan: attack plans for actionable findings.
-        batch = await self.planner.plan_attacks(diff_text, findings, commit_sha)
+        sources = await self._read_sources(sandbox, findings)
+        batch = await self.planner.plan_attacks(diff_text, findings, commit_sha, sources=sources)
         logger.info("Planner produced %d attack plans", len(batch.plans))
 
         # 3. Probe: fan out, one forked sandbox branch per plan, capped concurrency.
@@ -196,6 +197,17 @@ class ShipCheckScanner:
         )
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    async def _read_sources(sandbox: SandboxBase, findings: List[Finding]) -> Dict[str, str]:
+        """Full content of each file a finding points at, for the planner."""
+        sources: Dict[str, str] = {}
+        for path in sorted({f.target.file for f in findings if f.target.file}):
+            try:
+                sources[path] = (await sandbox.read_file(path)).decode("utf-8", "replace")
+            except Exception as err:  # noqa: BLE001 - planning still works from the diff
+                logger.info("Could not read %s for planning context: %s", path, err)
+        return sources
+
     @staticmethod
     def _match_plans_to_findings(
         plans: List[AttackPlan], findings: List[Finding]

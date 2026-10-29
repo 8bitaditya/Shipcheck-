@@ -75,3 +75,9 @@ jobs:
     - name: Run API tests (FR-8)
       run: |
         pytest tests/test_api.py -v
+
+    - name: Run live vulnshop exploits + fix loop (no keys needed)
+      env:
+        SHIPCHECK_LIVE: "1"
+      run: |
+        pytest tests/test_vulnshop_live.py -v

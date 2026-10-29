@@ -28,6 +28,10 @@ ACTIONABLE_CLASSES = {
     VulnClass.XSS,
 }
 
+# Context budget for full source files in the planning prompt (Ultra has 1M tokens).
+MAX_SOURCE_CHARS_PER_FILE = 60_000
+MAX_SOURCE_CHARS_TOTAL = 300_000
+
 # Default route + parameter heuristics per class, used when triage has none.
 _ROUTE_DEFAULTS = {
     VulnClass.SQLI: ("/login", "POST", "username"),
@@ -85,8 +89,14 @@ class AttackPlanner:
         diff_text: str,
         findings: List[Finding],
         commit_sha: str = "HEAD",
+        sources: Optional[Dict[str, str]] = None,
     ) -> AttackPlanBatch:
-        """Formulate attack plans for actionable findings."""
+        """Formulate attack plans for actionable findings.
+
+        `sources` maps file path -> full content for the files the findings sit
+        in. A PR diff often shows only a few changed lines; without the whole
+        file the model has to guess routes, parameter names and markers.
+        """
         actionable_findings = [f for f in findings if f.vuln_class in ACTIONABLE_CLASSES]
 
         if not actionable_findings:
@@ -103,7 +113,7 @@ DIFF:
 
 TRIAGE FINDINGS:
 {json.dumps([f.model_dump(mode="json") for f in actionable_findings], indent=2)}
-
+{self._sources_block(sources)}
 TAVILY RESEARCH GROUNDING:
 Answer: {grounding.get('answer')}
 Sources: {grounding.get('sources')}
@@ -140,6 +150,24 @@ Generate a structured attack plan batch (AttackPlanBatch JSON).
             llm_count, len(batch.plans) - llm_count,
         )
         return batch
+
+    @staticmethod
+    def _sources_block(sources: Optional[Dict[str, str]]) -> str:
+        """Full current content of the affected files, within a context budget."""
+        if not sources:
+            return ""
+        parts, used = [], 0
+        for path, text in sorted(sources.items()):
+            text = text[:MAX_SOURCE_CHARS_PER_FILE]
+            if used + len(text) > MAX_SOURCE_CHARS_TOTAL:
+                break
+            used += len(text)
+            parts.append(f"### {path}\n```\n{text}\n```")
+        return (
+            "\nSOURCE FILES (full current content of each file with a finding -- take real "
+            "routes, HTTP methods, parameter names and markers from here):\n"
+            + "\n\n".join(parts) + "\n"
+        )
 
     @staticmethod
     def _raw_plans(plan_json: Any) -> List[Dict[str, Any]]:
