@@ -57,7 +57,7 @@ class MockNemotronClient:
                             "route": "/download",
                             "http_method": "GET",
                             "parameter_name": "file",
-                            "suggested_payload": "../../etc/passwd",
+                            "suggested_payload": "../../../../../../../../../../../../etc/passwd",
                         },
                         {
                             "vuln_class": "xss",

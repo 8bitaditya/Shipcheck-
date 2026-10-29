@@ -90,14 +90,14 @@ What is in the `draft` branch today, and what still needs building.
 | Data contracts | `contracts/` | ✅ Built. 26 unit tests |
 | Diff ingest | `ingest/diff.py`, `ingest/github_ingest.py` | ✅ Built (diff parser, PR diff fetch, repo clone). No tests yet |
 | Triage | `triage/` | ✅ Built (gitleaks, pip-audit, osv-scanner, semgrep → SARIF → `Finding`, dedup). No tests yet |
-| Attack planning | `planning/planner.py`, `planning/tavily_client.py` | ✅ Built. Uses the mock LLM and offline grounding when no keys are set. No tests yet |
+| Attack planning | `planning/planner.py`, `planning/tavily_client.py` | ✅ Built. Nemotron Ultra returns canonical `AttackPlanBatch` JSON; each plan is validated on its own, gaps are filled from the matching finding, and any finding the model skipped gets a template plan. Uses the mock LLM and offline grounding when no keys are set. 5 tests |
 | Probe harness | `probes/harness.py`, `probes/markers.py` | ✅ Built for 4 classes: SQLi, command injection, path traversal, reflected XSS. Payloads are shell-quoted and URL-encoded, so quoted SQLi like `' OR 1=1--` is delivered intact (14 tests in `test_probe_harness.py`) |
 | Risk scoring | `contracts/verdict.py`, `scoring/reachability.py` | ✅ Built (`compute_risk_score`, reachability heuristic) |
 | Advisory grounding (FR-5) | `planning/tavily_client.py`, `contracts/grounding.py` | ✅ Built. Every confirmed finding gets Tavily-grounded CVE/GHSA/CWE IDs, affected versions (dependency findings) and the canonical fix, shown on the dashboard and in the PR body. Without a key it uses a built-in CWE/OWASP reference and labels it as offline. 6 tests |
 | Sandboxes | `sandbox/` | ✅ Built. ConTree backend + local fallback. 9 tests |
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
 | Prompts | `llm/prompts/*.md` | ✅ Drafted (planner, fixer, PoC generator, summarizer) |
-| Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. 6 tests |
+| Fix engine (FR-6) | `rectify/fixer.py` | ✅ Built. Generates a fix from the exploit evidence, applies it, re-probes in a forked child sandbox (marker must be gone) and runs the repo tests (must pass) — the "No PASS, No PR" gate. If a patch doesn't apply, Super is asked again (up to 2 more times), told why and shown the closest real text. 14 tests |
 | End-to-end orchestrator | `orchestrator.py` | ✅ Built. `ShipCheckScanner.scan()` chains triage → plan → probe → verdict → ground → rectify, probes fan out one forked sandbox per plan behind a semaphore, and (opt-in `open_prs=True`) opens a draft PR per verified fix. Returns a `ScanResult`. 10 tests |
 | Demo fixture | `fixtures/vulnshop/` | ✅ Built. A Flask app with one real bug per class (SQLi, CMDi, traversal, XSS); the probe harness exploits it live (see the live test) |
 | PR bot (FR-7) | `pr/github_bot.py` | ✅ Built. Opens a **draft** PR with an evidence body on a `shipcheck/fix-*` branch, only for a `VERIFIED_PASSED` fix, dedupes by head ref, never merges. 5 tests |
@@ -134,7 +134,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **80 passed, 4 skipped** (26 contract + 9 sandbox + 14 probe-harness + 6 grounding + 6 rectification + 10 orchestrator + 5 PR-bot + 4 API tests; the 4 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **101 passed, 6 skipped** (26 contract + 9 sandbox + 22 probe-harness + 5 planner + 6 grounding + 14 rectification + 10 orchestrator + 5 PR-bot + 4 API tests; the 6 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
 
 ### Run the dashboard
 
@@ -154,6 +154,8 @@ SHIPCHECK_LIVE=1 pytest tests/test_vulnshop_live.py -v
 ```
 
 This starts `vulnshop` in a local sandbox and fires live SQLi (`' OR 1=1--` login bypass), XSS, command-injection and path-traversal exploits, asserting each marker appears in the real HTTP response.
+
+It also runs the real fix loop: a correct SQLi patch is applied in a forked sandbox, re-attacked and regression-tested with `vulnshop`'s own tests, and must reach `VERIFIED_PASSED`; a no-op patch must fail the gate.
 
 ### 3. Configure (optional)
 
@@ -294,13 +296,14 @@ Shipcheck-/
 ├── tests/
 │   ├── test_contracts.py         # 26 tests
 │   ├── test_sandbox.py           # 9 tests
-│   ├── test_probe_harness.py     # 14 tests (payload quoting)
+│   ├── test_probe_harness.py     # 22 tests (payload quoting, workdir, traversal depth)
+│   ├── test_planner.py           # 5 tests (Ultra plan parsing)
 │   ├── test_grounding.py         # 6 tests (FR-5 Tavily grounding)
-│   ├── test_rectify.py           # 6 tests (FR-6 fix loop)
+│   ├── test_rectify.py           # 14 tests (FR-6 fix loop)
 │   ├── test_orchestrator.py      # 10 tests (end-to-end chaining)
 │   ├── test_pr_bot.py            # 5 tests (FR-7 draft PR)
 │   ├── test_api.py               # 4 tests (FR-8 dashboard/API)
-│   └── test_vulnshop_live.py     # 4 live exploit tests (opt-in: SHIPCHECK_LIVE=1)
+│   └── test_vulnshop_live.py     # 6 live tests: 4 exploits + real fix loop (opt-in: SHIPCHECK_LIVE=1)
 ├── docs/
 │   ├── PRD.pdf, BUILD_PLAN.pdf   # product requirements + day-by-day plan
 │   ├── contracts_design_decisions.md
@@ -320,7 +323,7 @@ Shipcheck-/
 
 All eight functional requirements are built. What remains is hardening and the demo:
 
-1. **Real end-to-end run:** wire the live Nemotron client + a real scanner (set `NEBIUS_API_KEY`) so `ShipCheckScanner.scan()` runs against `vulnshop` with no stubs, and point the PR bot at a real repo/token.
+1. **Real end-to-end run:** done with live Nemotron + Tavily on the local sandbox. Against `vulnshop` all 4 bugs are confirmed with Ultra-written plans; SQLi, CMDi and traversal fixes pass the gate every run, and the XSS fix passed in about half the runs (Super sometimes adds a stray character to its search text, and the gate correctly rejects it). Still to do: install the scanners (semgrep, gitleaks, osv-scanner, pip-audit) or bake them into the probe image so triage finds these on its own, run on ConTree, and open a real draft PR.
 2. **Golden-run replay:** record a full scan's evidence under `golden/` and serve it via `GET /api/demo` so the judges' demo never depends on a live model/sandbox.
 3. Tests for triage, planner and markers; deploy to a Nebius Serverless Endpoint.
 

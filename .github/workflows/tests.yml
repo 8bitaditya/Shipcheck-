@@ -40,6 +40,10 @@ jobs:
       run: |
         pytest tests/test_probe_harness.py -v
 
+    - name: Run attack planner tests
+      run: |
+        pytest tests/test_planner.py -v
+
     - name: Run Tavily grounding tests (FR-5)
       run: |
         pytest tests/test_grounding.py -v

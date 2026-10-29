@@ -192,7 +192,8 @@ CANONICAL_ATTACK_TEMPLATES: Dict[VulnClass, Dict[str, Any]] = {
     },
     VulnClass.TRAVERSAL: {
         "payload_strategy": "dot-dot-slash directory traversal",
-        "default_payload": "../../etc/passwd",
+        # extra ../ are harmless at "/", and reach root from deep sandbox dirs too
+        "default_payload": "../../../../../../../../../../../../etc/passwd",
         "expected_marker": "root:",
         "sink_example": "open(os.path.join(BASE_DIR, filename))",
         "description": "Path traversal escaping base directory to read system account file"

@@ -207,3 +207,100 @@ async def test_verified_failed_when_tests_break():
     assert patch.recheck_attack_marker_absent is True
     assert patch.repo_tests_passed is False
     assert patch.is_verified_for_pr() is False
+
+
+class SequenceLLM:
+    """Returns each payload in turn and records the prompts it was sent."""
+
+    def __init__(self, *payloads):
+        self.payloads = list(payloads)
+        self.prompts = []
+
+    async def complete_json(self, prompt, system_prompt=None, tier="super", max_tokens=4096):
+        self.prompts.append(prompt)
+        return self.payloads[min(len(self.prompts), len(self.payloads)) - 1]
+
+
+async def test_rejected_patch_is_regenerated_with_feedback():
+    """A patch that doesn't apply gets one retry, told why it was rejected."""
+    eng = RectificationEngine(harness=StubHarness(marker_found=False))
+    eng.llm = SequenceLLM(ABSENT_PAYLOAD, VALID_PAYLOAD)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": SOURCE}))
+
+    assert patch.status == FixStatus.VERIFIED_PASSED
+    assert len(eng.llm.prompts) == 2
+    assert "Previous attempt rejected" not in eng.llm.prompts[0]
+    assert "Target search string not found" in eng.llm.prompts[1]
+    assert "attempt 1:" in patch.verification_log
+
+
+async def test_regeneration_is_bounded():
+    eng = RectificationEngine(harness=StubHarness(marker_found=False), max_regenerations=1)
+    eng.llm = SequenceLLM(ABSENT_PAYLOAD)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": SOURCE}))
+
+    assert patch.status == FixStatus.REJECTED_SEARCH_NOT_FOUND
+    assert len(eng.llm.prompts) == 2  # original + one retry, no more
+    assert patch.is_verified_for_pr() is False
+
+
+class ChildDirSandbox(StubSandbox):
+    """StubSandbox whose forks each report their own working dir."""
+
+    def __init__(self, files, test_exit=0, root="/tmp/parent"):
+        super().__init__(files, test_exit)
+        self.root = root
+
+    @property
+    def default_workdir(self) -> str:
+        return self.root
+
+    async def fork(self):
+        return ChildDirSandbox(self.files, self.test_exit, root=self.root + "-child")
+
+
+class RecordingHarness(StubHarness):
+    def __init__(self):
+        super().__init__(marker_found=False)
+        self.calls = []
+
+    async def execute_step(self, sandbox, plan, app_cmd="python app.py", target_dir=None):
+        self.calls.append((sandbox, target_dir))
+        return await super().execute_step(sandbox, plan, app_cmd, target_dir)
+
+
+@pytest.mark.parametrize("target_dir, expected", [
+    (None, None),                              # child's own default
+    ("/tmp/parent", "/tmp/parent-child"),      # parent root -> child root
+    ("/tmp/parent/sub", "/tmp/parent-child/sub"),
+    ("/workspace", "/workspace"),              # unrelated path untouched
+])
+async def test_reprobe_targets_the_patched_child(target_dir, expected):
+    """Regression: the re-probe once ran the parent's (unpatched) code."""
+    harness = RecordingHarness()
+    eng = RectificationEngine(harness=harness)
+    eng.llm = FakeLLM(VALID_PAYLOAD)
+    parent = ChildDirSandbox({"app.py": SOURCE})
+    await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), parent, target_dir=target_dir)
+
+    probed_sandbox, probed_dir = harness.calls[0]
+    assert probed_sandbox is not parent
+    assert probed_sandbox.files["app.py"] != SOURCE  # the patched copy
+    assert probed_dir == expected
+
+
+async def test_retry_feedback_shows_the_real_text_for_a_near_miss():
+    """Super once kept adding a stray '>' to a search line; show it the real line."""
+    near_miss = {"hunks": [{"file": "app.py", "search": VULN_LINE + ">", "replace": FIXED_LINE}]}
+    eng = RectificationEngine(harness=StubHarness(marker_found=False))
+    eng.llm = SequenceLLM(near_miss, VALID_PAYLOAD)
+    patch = await eng.apply_and_verify(_sqli_finding(), _sqli_plan(), StubSandbox({"app.py": SOURCE}))
+
+    assert patch.status == FixStatus.VERIFIED_PASSED
+    retry_prompt = eng.llm.prompts[1]
+    assert "The closest text actually in the file is" in retry_prompt
+    assert "```\n" + VULN_LINE + "\n```" in retry_prompt
+
+
+def test_closest_block_ignores_unrelated_text():
+    assert RectificationEngine._closest_block(SOURCE, "completely different text here") is None

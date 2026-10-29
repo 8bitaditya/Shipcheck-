@@ -35,7 +35,7 @@ from shipcheck.planning.tavily_client import TavilyGroundingClient
 from shipcheck.pr.github_bot import GitHubPRBot
 from shipcheck.probes.harness import ProbeHarness
 from shipcheck.rectify.fixer import RectificationEngine
-from shipcheck.sandbox.base import SandboxBase
+from shipcheck.sandbox.base import SandboxBase, rebase_workdir
 from shipcheck.scoring.reachability import ReachabilityAnalyzer
 from shipcheck.triage.runner import TriageRunner
 
@@ -96,7 +96,7 @@ class ShipCheckScanner:
         commit_sha: str = "HEAD",
         changed_files: Optional[Set[str]] = None,
         app_cmd: str = "python app.py",
-        target_dir: str = "/workspace",
+        target_dir: Optional[str] = None,
         test_cmd: Optional[str] = "python -m pytest -q",
         rectify: bool = True,
         open_prs: bool = False,
@@ -105,6 +105,7 @@ class ShipCheckScanner:
         """Run triage -> plan -> probe -> verdict -> ground -> rectify over a PR diff.
 
         The code under test must already be materialized in `sandbox`.
+        `target_dir` defaults to the sandbox's own working dir (each fork's).
         """
         changed = changed_files or extract_changed_filenames(diff_text)
 
@@ -124,7 +125,8 @@ class ShipCheckScanner:
             async with sem:
                 child = await sandbox.fork()
                 evidence = await self.harness.execute_step(
-                    child, plan, app_cmd=app_cmd, target_dir=target_dir
+                    child, plan, app_cmd=app_cmd,
+                    target_dir=rebase_workdir(target_dir, sandbox, child),
                 )
                 return plan, evidence
 

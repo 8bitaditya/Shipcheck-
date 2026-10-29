@@ -47,6 +47,11 @@ class LocalDockerBackend(SandboxBase):
             self.workdir = Path(self._temp_dir).resolve()
             self._cleanup = True
 
+    @property
+    def default_workdir(self) -> str:
+        """The code lives in this sandbox's own temp dir, not /workspace."""
+        return str(self.workdir)
+
     async def apply_files(self, files: Dict[str, Union[str, bytes, Path]]) -> None:
         """Materialize or overwrite files directly into the sandbox working directory."""
         for rel_path, content in files.items():

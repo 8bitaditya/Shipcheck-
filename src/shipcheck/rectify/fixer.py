@@ -13,6 +13,7 @@ marker check and the test exit code decide it, not the LLM.
 
 from __future__ import annotations
 
+import difflib
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,7 @@ from shipcheck.contracts.fix import DiffHunk, FixPatch, FixStatus
 from shipcheck.llm.mock_llm import MockNemotronClient
 from shipcheck.llm.nemotron_client import NemotronClient
 from shipcheck.probes.harness import ProbeHarness
-from shipcheck.sandbox.base import SandboxBase
+from shipcheck.sandbox.base import SandboxBase, rebase_workdir
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class RectificationEngine:
         self,
         llm_client: Optional[NemotronClient] = None,
         harness: Optional[ProbeHarness] = None,
+        max_regenerations: int = 2,
     ):
         if config.LLM_BACKEND == "mock" or not config.NEBIUS_API_KEY:
             self.llm = MockNemotronClient()
@@ -43,6 +45,9 @@ class RectificationEngine:
             self.llm = llm_client or NemotronClient()
 
         self.harness = harness or ProbeHarness()
+        # Extra fix attempts when a patch can't be applied (search block not
+        # found / ambiguous). The model gets the rejection reason as feedback.
+        self.max_regenerations = max_regenerations
 
         prompt_path = Path(__file__).parent.parent / "llm" / "prompts" / "fixer.md"
         self.system_prompt = (
@@ -54,7 +59,9 @@ class RectificationEngine:
     # ------------------------------------------------------------------ #
     # Stage 1: fix generation                                            #
     # ------------------------------------------------------------------ #
-    async def generate_fix(self, finding: Finding, source_text: str) -> FixPatch:
+    async def generate_fix(
+        self, finding: Finding, source_text: str, feedback: Optional[str] = None
+    ) -> FixPatch:
         """Ask the fixer model for a diff-hunk patch grounded in the exploit evidence."""
         evidence_ctx = (
             finding.evidence.to_fixer_prompt_context()
@@ -70,6 +77,13 @@ class RectificationEngine:
             f"{evidence_ctx}\n\n"
             f"Generate the fix as diff-hunk JSON."
         )
+        if feedback:
+            prompt += (
+                f"\n\n## Previous attempt rejected\n{feedback}\n"
+                f"Copy each `search` block verbatim from the target file above "
+                f"(exact characters and indentation, nothing added), long enough "
+                f"to match exactly once."
+            )
         data = await self.llm.complete_json(
             prompt=prompt,
             system_prompt=self.system_prompt,
@@ -131,7 +145,7 @@ class RectificationEngine:
         sandbox: SandboxBase,
         *,
         app_cmd: str = "python app.py",
-        target_dir: str = "/workspace",
+        target_dir: Optional[str] = None,
         test_cmd: Optional[str] = "python -m pytest -q",
     ) -> FixPatch:
         """Generate, apply and re-verify a fix for one confirmed finding.
@@ -148,35 +162,21 @@ class RectificationEngine:
             logger.warning("Could not read %s for fix generation: %s", finding.target.file, exc)
             source_text = ""
 
-        patch = await self.generate_fix(finding, source_text)
-        if not patch.hunks:
-            patch.status = FixStatus.VERIFIED_FAILED
-            patch.verification_log = "Fixer produced no applicable hunks."
+        feedback: Optional[str] = None
+        rejections: List[str] = []
+        for attempt in range(1 + max(0, self.max_regenerations)):
+            patch = await self.generate_fix(finding, source_text, feedback=feedback)
+            patched_files = await self._apply_hunks(patch, sandbox)
+            if patched_files is not None:
+                break
+            rejections.append(f"attempt {attempt + 1}: {patch.verification_log}")
+            feedback = await self._rejection_feedback(patch, sandbox)
+        else:
+            # Every attempt was rejected before reaching the sandbox.
+            patch.verification_log = "\n".join(rejections)
+            if not patch.hunks:
+                patch.status = FixStatus.VERIFIED_FAILED
             return patch
-
-        # Apply each hunk to its file, grouped so multiple hunks on one file chain.
-        patched_files: Dict[str, str] = {}
-        for hunk in patch.hunks:
-            if hunk.file not in patched_files:
-                try:
-                    patched_files[hunk.file] = (
-                        await sandbox.read_file(hunk.file)
-                    ).decode("utf-8", "replace")
-                except Exception as exc:  # noqa: BLE001
-                    patch.status = FixStatus.REJECTED_SEARCH_NOT_FOUND
-                    patch.verification_log = f"Could not read target file '{hunk.file}': {exc}"
-                    return patch
-
-            new_content, ok, reason = hunk.apply_to_text(patched_files[hunk.file])
-            if not ok:
-                patch.status = (
-                    FixStatus.REJECTED_AMBIGUOUS_MATCH
-                    if "Ambiguous" in reason
-                    else FixStatus.REJECTED_SEARCH_NOT_FOUND
-                )
-                patch.verification_log = reason
-                return patch
-            patched_files[hunk.file] = new_content
 
         patch.status = FixStatus.APPLIED
 
@@ -185,7 +185,8 @@ class RectificationEngine:
         await child.apply_files(patched_files)
 
         reprobe = await self.harness.execute_step(
-            child, plan, app_cmd=app_cmd, target_dir=target_dir
+            child, plan, app_cmd=app_cmd,
+            target_dir=rebase_workdir(target_dir, sandbox, child),
         )
         marker_absent = not reprobe.marker_found
         patch.recheck_attack_marker_absent = marker_absent
@@ -206,6 +207,8 @@ class RectificationEngine:
             patch.repo_tests_passed = None
             log_parts.append("No repo test command supplied; regression gate skipped.")
 
+        if rejections:
+            log_parts = rejections + log_parts
         patch.verification_log = "\n".join(log_parts)
 
         # No PASS, No PR: both the marker check and the tests must pass.
@@ -215,3 +218,69 @@ class RectificationEngine:
             patch.status = FixStatus.VERIFIED_FAILED
 
         return patch
+
+    @staticmethod
+    def _closest_block(content: str, search: str) -> Optional[str]:
+        """The run of lines in `content` most similar to `search` (same line count)."""
+        lines = content.splitlines()
+        n = max(1, len(search.splitlines()))
+        best, best_ratio = None, 0.0
+        for i in range(0, max(1, len(lines) - n + 1)):
+            block = "\n".join(lines[i:i + n])
+            ratio = difflib.SequenceMatcher(None, block, search).ratio()
+            if ratio > best_ratio:
+                best, best_ratio = block, ratio
+        return best if best_ratio >= 0.6 else None
+
+    @classmethod
+    async def _rejection_feedback(cls, patch: FixPatch, sandbox: SandboxBase) -> str:
+        """Rejection reason plus, for a near-miss search block, the real text to copy."""
+        feedback = patch.verification_log or "Patch could not be applied."
+        if patch.status != FixStatus.REJECTED_SEARCH_NOT_FOUND:
+            return feedback
+        for hunk in patch.hunks:
+            try:
+                content = (await sandbox.read_file(hunk.file)).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                continue
+            if hunk.search in content:
+                continue
+            closest = cls._closest_block(content, hunk.search)
+            if closest is not None:
+                feedback += (
+                    f"\nYour search block for '{hunk.file}' was:\n```\n{hunk.search}\n```\n"
+                    f"The closest text actually in the file is:\n```\n{closest}\n```"
+                )
+        return feedback
+
+    @staticmethod
+    async def _apply_hunks(patch: FixPatch, sandbox: SandboxBase) -> Optional[Dict[str, str]]:
+        """Apply the hunks in memory. Returns the patched files, or None (status/log set) if rejected."""
+        if not patch.hunks:
+            patch.verification_log = "Fixer produced no applicable hunks."
+            return None
+
+        # Apply each hunk to its file, grouped so multiple hunks on one file chain.
+        patched_files: Dict[str, str] = {}
+        for hunk in patch.hunks:
+            if hunk.file not in patched_files:
+                try:
+                    patched_files[hunk.file] = (
+                        await sandbox.read_file(hunk.file)
+                    ).decode("utf-8", "replace")
+                except Exception as exc:  # noqa: BLE001
+                    patch.status = FixStatus.REJECTED_SEARCH_NOT_FOUND
+                    patch.verification_log = f"Could not read target file '{hunk.file}': {exc}"
+                    return None
+
+            new_content, ok, reason = hunk.apply_to_text(patched_files[hunk.file])
+            if not ok:
+                patch.status = (
+                    FixStatus.REJECTED_AMBIGUOUS_MATCH
+                    if "Ambiguous" in reason
+                    else FixStatus.REJECTED_SEARCH_NOT_FOUND
+                )
+                patch.verification_log = reason
+                return None
+            patched_files[hunk.file] = new_content
+        return patched_files

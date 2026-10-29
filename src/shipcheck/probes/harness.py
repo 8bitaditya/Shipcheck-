@@ -19,8 +19,11 @@ from shipcheck.probes.markers import (
 
 logger = logging.getLogger(__name__)
 
+# '../' hops a traversal payload is padded to (see ProbeHarness._deepen_traversal).
+TRAVERSAL_MIN_DEPTH = 12
+
 PROBE_CHAIN_SCRIPT = """
-cd {{ target_dir }}
+cd {{ target_dir }} || { echo "shipcheck: cannot cd to target dir" >&2; exit 2; }
 {{ app_cmd }} > /tmp/app_out.log 2> /tmp/app_err.log &
 APP_PID=$!
 
@@ -85,6 +88,20 @@ class ProbeHarness:
             field = shlex.quote(f"{param}={payload}")
             return f"curl -s -G {url} --data-urlencode {field}"
 
+    @staticmethod
+    def _deepen_traversal(payload: str, depth: int = TRAVERSAL_MIN_DEPTH) -> str:
+        """Pad a leading run of '../' to `depth`.
+
+        The planner can't know how deep the app sits (/workspace vs a temp dir),
+        and extra '../' are harmless once at '/', so padding only removes false
+        negatives; it can't make a non-traversable path succeed.
+        """
+        m = re.match(r"^(?:\.\./)+", payload)
+        if not m:
+            return payload
+        hops = m.group(0).count("../")
+        return "../" * max(hops, depth) + payload[m.end():]
+
     def _verify_marker(
         self, vuln_class: VulnClass, response_text: str, payload: str, expected_marker: str
     ) -> Tuple[bool, Optional[str]]:
@@ -104,15 +121,21 @@ class ProbeHarness:
         sandbox: SandboxBase,
         plan: AttackPlan,
         app_cmd: str = "python app.py",
-        target_dir: str = "/workspace",
+        target_dir: Optional[str] = None,
     ) -> Evidence:
-        """Execute an attack plan inside an isolated sandbox microVM branch."""
+        """Execute an attack plan inside an isolated sandbox microVM branch.
+
+        `target_dir` defaults to the given sandbox's own working dir, so a probe
+        on a forked (e.g. patched) child runs the child's code, not the parent's.
+        """
         payload = plan.suggested_payload or "' OR 1=1--"
+        if plan.vuln_class == VulnClass.TRAVERSAL:
+            payload = self._deepen_traversal(payload)
         probe_cmd = self._build_probe_command(plan, payload)
 
         tpl = Template(PROBE_CHAIN_SCRIPT)
         chained_script = tpl.render(
-            target_dir=target_dir,
+            target_dir=shlex.quote(target_dir or sandbox.default_workdir),
             app_cmd=app_cmd,
             port=self.port,
             probe_cmd=probe_cmd,

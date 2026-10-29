@@ -21,6 +21,10 @@ from pathlib import Path
 import pytest
 
 from shipcheck.contracts.attack_plan import AttackPlan, VulnClass
+from shipcheck.contracts.evidence import Evidence
+from shipcheck.contracts.finding import Finding, FindingTarget
+from shipcheck.contracts.fix import FixStatus
+from shipcheck.rectify.fixer import RectificationEngine
 from shipcheck.probes.harness import ProbeHarness
 from shipcheck.sandbox.client import SandboxClient
 
@@ -55,7 +59,6 @@ async def _run_probe(plan: AttackPlan):
         plan,
         # sys.executable: the sandbox shell may not have a bare `python` on PATH
         app_cmd=f"PORT={port} {shlex.quote(sys.executable)} app.py",
-        target_dir=str(sandbox.workdir),
     )
 
 
@@ -101,3 +104,73 @@ async def test_live_traversal_marker_fires():
     )
     evidence = await _run_probe(plan)
     assert evidence.marker_found, evidence.response_excerpt
+
+
+# --------------------------------------------------------------------------- #
+# Live fix loop: patch vulnshop in a forked sandbox, re-attack, run its tests  #
+# --------------------------------------------------------------------------- #
+SQLI_VULN = (
+    "    query = (\n"
+    "        \"SELECT username, email FROM users \"\n"
+    "        \"WHERE username = '%s' AND password = '%s'\" % (username, password)\n"
+    "    )\n"
+    "    rows = conn.execute(query).fetchall()\n"
+)
+SQLI_FIXED = (
+    "    query = \"SELECT username, email FROM users WHERE username = ? AND password = ?\"\n"
+    "    rows = conn.execute(query, (username, password)).fetchall()\n"
+)
+
+
+class _FixLLM:
+    def __init__(self, replace):
+        self.replace = replace
+
+    async def complete_json(self, prompt, system_prompt=None, tier="super", max_tokens=4096):
+        return {"hunks": [{"file": "app.py", "search": SQLI_VULN, "replace": self.replace}],
+                "root_cause": "string-formatted SQL", "explanation": "bind parameters"}
+
+
+async def _fix_loop(replace):
+    client = SandboxClient(backend_type="mock")
+    sandbox = client.create_sandbox()
+    await sandbox.apply_files({
+        name: (VULNSHOP / name).read_text()
+        for name in ("app.py", "test_app.py", "files/readme.txt")
+    })
+    port = _free_port()
+    harness = ProbeHarness(port=port)
+    plan = AttackPlan(
+        vuln_class=VulnClass.SQLI, target_file="app.py", sink="conn.execute",
+        payload_strategy="tautology", expected_marker="admin@vulnshop.local",
+        route="/login", http_method="POST", parameter_name="username",
+        suggested_payload="' OR 1=1--",
+    )
+    py = shlex.quote(sys.executable)
+    evidence = await harness.execute_step(sandbox, plan, app_cmd=f"PORT={port} {py} app.py")
+    assert evidence.marker_found  # vulnerable before the fix
+    finding = Finding(vuln_class=VulnClass.SQLI, title="sqli", evidence=evidence,
+                      target=FindingTarget(file="app.py", sink="conn.execute", endpoint="/login"))
+    engine = RectificationEngine(harness=harness)
+    engine.llm = _FixLLM(replace)
+    patch = await engine.apply_and_verify(
+        finding, plan, sandbox, app_cmd=f"PORT={port} {py} app.py",
+        test_cmd=f"{py} -m pytest -q test_app.py",
+    )
+    original = (await sandbox.read_file("app.py")).decode()
+    return patch, original
+
+
+async def test_live_real_fix_passes_the_gate():
+    """Regression: the re-probe used to hit the parent's unpatched code."""
+    patch, original = await _fix_loop(SQLI_FIXED)
+    assert patch.recheck_attack_marker_absent is True, patch.verification_log
+    assert patch.repo_tests_passed is True, patch.verification_log
+    assert patch.status == FixStatus.VERIFIED_PASSED
+    assert "% (username, password)" in original  # parent left vulnerable
+
+
+async def test_live_no_op_fix_fails_the_gate():
+    patch, _ = await _fix_loop(SQLI_VULN.replace("    rows", "    # still vulnerable\n    rows"))
+    assert patch.recheck_attack_marker_absent is False
+    assert patch.status == FixStatus.VERIFIED_FAILED
