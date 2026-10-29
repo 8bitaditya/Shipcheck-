@@ -91,7 +91,7 @@ What is in the `draft` branch today, and what still needs building.
 | Diff ingest | `ingest/diff.py`, `ingest/github_ingest.py` | ✅ Built (diff parser, PR diff fetch, repo clone). No tests yet |
 | Triage | `triage/` | ✅ Built (gitleaks, pip-audit, osv-scanner, semgrep → SARIF → `Finding`, dedup). No tests yet |
 | Attack planning | `planning/planner.py`, `planning/tavily_client.py` | ✅ Built. Uses the mock LLM and offline grounding when no keys are set. No tests yet |
-| Probe harness | `probes/harness.py`, `probes/markers.py` | ✅ Built for 4 classes: SQLi, command injection, path traversal, reflected XSS. No tests yet |
+| Probe harness | `probes/harness.py`, `probes/markers.py` | ✅ Built for 4 classes: SQLi, command injection, path traversal, reflected XSS. Payloads are shell-quoted and URL-encoded, so quoted SQLi like `' OR 1=1--` is delivered intact (14 tests in `test_probe_harness.py`) |
 | Risk scoring | `contracts/verdict.py`, `scoring/reachability.py` | ✅ Built (`compute_risk_score`, reachability heuristic) |
 | Sandboxes | `sandbox/` | ✅ Built. ConTree backend + local fallback. 9 tests |
 | LLM client | `llm/nemotron_client.py`, `llm/mock_llm.py`, `llm/json_extract.py` | ✅ Built (tiered models, retries, offline mock) |
@@ -133,7 +133,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **57 passed, 3 skipped** (26 contract + 9 sandbox + 6 rectification + 7 orchestrator + 5 PR-bot + 4 API tests; the 3 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
+Expected: **71 passed, 4 skipped** (26 contract + 9 sandbox + 14 probe-harness + 6 rectification + 7 orchestrator + 5 PR-bot + 4 API tests; the 4 live tests skip unless opted in). Run it with the venv **activated**. Some sandbox tests shell out to a bare `python` command, and on macOS that only exists inside the venv.
 
 ### Run the dashboard
 
@@ -152,7 +152,7 @@ pip install 'flask>=3.0,<4.0'
 SHIPCHECK_LIVE=1 pytest tests/test_vulnshop_live.py -v
 ```
 
-This starts `vulnshop` in a local sandbox and fires live XSS, command-injection and path-traversal exploits, asserting each marker appears in the real HTTP response.
+This starts `vulnshop` in a local sandbox and fires live SQLi (`' OR 1=1--` login bypass), XSS, command-injection and path-traversal exploits, asserting each marker appears in the real HTTP response.
 
 ### 3. Configure (optional)
 
@@ -276,11 +276,12 @@ Shipcheck-/
 ├── tests/
 │   ├── test_contracts.py         # 26 tests
 │   ├── test_sandbox.py           # 9 tests
+│   ├── test_probe_harness.py     # 14 tests (payload quoting)
 │   ├── test_rectify.py           # 6 tests (FR-6 fix loop)
-│   ├── test_orchestrator.py      # 4 tests (end-to-end chaining)
+│   ├── test_orchestrator.py      # 7 tests (end-to-end chaining)
 │   ├── test_pr_bot.py            # 5 tests (FR-7 draft PR)
 │   ├── test_api.py               # 4 tests (FR-8 dashboard/API)
-│   └── test_vulnshop_live.py     # 3 live exploit tests (opt-in: SHIPCHECK_LIVE=1)
+│   └── test_vulnshop_live.py     # 4 live exploit tests (opt-in: SHIPCHECK_LIVE=1)
 ├── docs/
 │   ├── PRD.pdf, BUILD_PLAN.pdf   # product requirements + day-by-day plan
 │   ├── contracts_design_decisions.md
@@ -289,7 +290,7 @@ Shipcheck-/
 ├── CONTRACTS_DECISIONS.md        # architectural decision records
 ├── PRoject.txt                   # build notes
 ├── Dockerfile                    # serves the dashboard/API (uvicorn on :8000)
-├── .github/workflows/tests.yml   # CI: contract + sandbox + rectify tests on 3.11 / 3.12
+├── .github/workflows/tests.yml   # CI: all deterministic test files on 3.11 / 3.12
 ├── requirements.txt, pyproject.toml, .env.example
 └── LICENSE
 ```
@@ -302,10 +303,9 @@ All eight functional requirements are built. What remains is hardening and the d
 
 1. **Real end-to-end run:** wire the live Nemotron client + a real scanner (set `NEBIUS_API_KEY`) so `ShipCheckScanner.scan()` runs against `vulnshop` with no stubs, and point the PR bot at a real repo/token.
 2. **Golden-run replay:** record a full scan's evidence under `golden/` and serve it via `GET /api/demo` so the judges' demo never depends on a live model/sandbox.
-3. **Harden the probe harness:** escape POST payloads so quoted SQLi can be live-tested (currently the single-quote in the SQLi payload breaks the shell command).
-4. Tests for triage, planner and markers; deploy to a Nebius Serverless Endpoint.
+3. Tests for triage, planner and markers; deploy to a Nebius Serverless Endpoint.
 
-> **Done:** ✅ FR-6 fix engine · ✅ scan orchestrator (opens draft PRs when `open_prs=True`) · ✅ `vulnshop` fixture (exploited live — XSS, CMDi, traversal) · ✅ FR-7 draft-PR bot · ✅ FR-8 dashboard/API.
+> **Done:** ✅ FR-6 fix engine · ✅ scan orchestrator (opens draft PRs when `open_prs=True`) · ✅ `vulnshop` fixture (exploited live — SQLi, XSS, CMDi, traversal) · ✅ FR-7 draft-PR bot · ✅ FR-8 dashboard/API.
 
 ---
 

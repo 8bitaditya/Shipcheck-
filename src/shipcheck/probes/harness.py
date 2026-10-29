@@ -2,6 +2,7 @@
 
 import logging
 import re
+import shlex
 import time
 from typing import Optional, Tuple
 from jinja2 import Template
@@ -61,18 +62,28 @@ class ProbeHarness:
         return "ip"
 
     def _build_probe_command(self, plan: AttackPlan, payload: str) -> str:
-        """Construct curl invocation for localhost microVM execution."""
+        """Construct curl invocation for localhost microVM execution.
+
+        Every argument is shell-quoted and every form value URL-encoded by curl,
+        so payloads containing quotes, ';', '&', '#' etc. (e.g. ' OR 1=1--)
+        reach the target byte-for-byte instead of breaking the probe command.
+        """
         endpoint = (plan.route or "/").lstrip("/")
-        url = f"http://127.0.0.1:{self.port}/{endpoint}"
+        url = shlex.quote(f"http://127.0.0.1:{self.port}/{endpoint}")
 
         if plan.http_method.upper() == "POST":
             # For SQLi login or similar POST body
             param = plan.parameter_name or "username"
-            return f"curl -s -X POST '{url}' -d '{param}={payload}&password=x'"
+            field = shlex.quote(f"{param}={payload}")
+            return (
+                f"curl -s -X POST {url} --data-urlencode {field} "
+                f"--data-urlencode 'password=x'"
+            )
         else:
             # For GET parameters
             param = self._default_param(plan)
-            return f"curl -s -G '{url}' --data-urlencode '{param}={payload}'"
+            field = shlex.quote(f"{param}={payload}")
+            return f"curl -s -G {url} --data-urlencode {field}"
 
     def _verify_marker(
         self, vuln_class: VulnClass, response_text: str, payload: str, expected_marker: str

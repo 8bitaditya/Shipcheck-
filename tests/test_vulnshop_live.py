@@ -12,8 +12,10 @@ when SHIPCHECK_LIVE=1. The default suite and CI stay deterministic.
 
 import importlib.util
 import os
+import shlex
 import shutil
 import socket
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,9 +53,21 @@ async def _run_probe(plan: AttackPlan):
     return await harness.execute_step(
         sandbox,
         plan,
-        app_cmd=f"PORT={port} python app.py",
+        # sys.executable: the sandbox shell may not have a bare `python` on PATH
+        app_cmd=f"PORT={port} {shlex.quote(sys.executable)} app.py",
         target_dir=str(sandbox.workdir),
     )
+
+
+async def test_live_sqli_marker_fires():
+    plan = AttackPlan(
+        vuln_class=VulnClass.SQLI, target_file="app.py", sink="conn.execute",
+        payload_strategy="tautology login bypass", expected_marker="admin@vulnshop.local",
+        route="/login", http_method="POST", parameter_name="username",
+        suggested_payload="' OR 1=1--",
+    )
+    evidence = await _run_probe(plan)
+    assert evidence.marker_found, evidence.response_excerpt
 
 
 async def test_live_xss_marker_fires():
