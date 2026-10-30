@@ -7,7 +7,7 @@ sdk: static
 app_file: index.html
 pinned: false
 license: apache-2.0
-short_description: Attacks AI-generated code, proves the exploit, fixes it, re-attacks the fix
+short_description: Proves the exploit, fixes it, then re-attacks the fix
 ---
 
 # ShipCheck — adversarial verification gate for AI-generated code
