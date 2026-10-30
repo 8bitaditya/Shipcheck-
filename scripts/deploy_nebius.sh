@@ -8,6 +8,7 @@
 #
 # Needs: a Nebius AI Cloud profile (`nebius profile create`), Docker, jq.
 #   REGION_ID=eu-north1 scripts/deploy_nebius.sh
+#   IMAGE=ghcr.io/<user>/shipcheck:<tag> scripts/deploy_nebius.sh   # skip Nebius registry
 # The endpoint keeps running (and billing) until deleted:
 #   nebius ai endpoint delete <id>
 set -euo pipefail
@@ -17,10 +18,15 @@ REGION_ID="${REGION_ID:-eu-north1}"
 NAME="${NAME:-shipcheck-demo}"
 REGISTRY_NAME="${REGISTRY_NAME:-shipcheck}"
 PLATFORM="${PLATFORM:-cpu-d3}"
-PRESET="${PRESET:-4vcpu-16gb}"
+PRESET="${PRESET:-2vcpu-8gb}"  # smallest cpu-d3; the public demo is a small read-only app
 TAG="${TAG:-public-$(git rev-parse --short HEAD)}"
 cd "$(dirname "$0")/.."
 
+if [ -n "${IMAGE:-}" ]; then
+  # Use an image already pushed to any public registry (e.g. ghcr.io), skipping
+  # Nebius Container Registry: IMAGE=ghcr.io/<user>/shipcheck:<tag>
+  echo "== using prebuilt image $IMAGE"
+else
 echo "== registry"
 REGISTRY_ID=$("$NEBIUS" registry list --format json | jq -r --arg n "$REGISTRY_NAME" \
   '[.items[]? | select(.metadata.name == $n) | .metadata.id][0] // empty')
@@ -34,6 +40,7 @@ IMAGE="cr.${REGION_ID}.nebius.cloud/${REGISTRY_PATH}/shipcheck:${TAG}"
 echo "== build + push $IMAGE"
 docker build --platform linux/amd64 --build-arg PUBLIC_DEMO=1 -t "$IMAGE" .
 docker push "$IMAGE"
+fi
 
 echo "== endpoint"
 SUBNET_ID="${SUBNET_ID:-$("$NEBIUS" vpc subnet list --format json | jq -r '.items[0].metadata.id')}"
