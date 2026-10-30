@@ -39,12 +39,9 @@ def login():
     username = request.form.get("username", "")
     password = request.form.get("password", "")
     conn = _db()
-    # VULN (SQLi): user input concatenated straight into the query.
-    query = (
-        "SELECT username, email FROM users "
-        "WHERE username = '%s' AND password = '%s'" % (username, password)
-    )
-    rows = conn.execute(query).fetchall()
+    # FIXED: Use parameterized query to prevent SQL injection
+    query = "SELECT username, email FROM users WHERE username = ? AND password = ?"
+    rows = conn.execute(query, (username, password)).fetchall()
     if rows:
         return "Welcome: " + ", ".join(f"{u} <{e}>" for u, e in rows)
     return "Invalid credentials", 401
