@@ -2,11 +2,20 @@
 
 This follows the PRD §10 beats. The audio must cover Token Factory and Nemotron (a submission requirement). Total length is 2:55. Record the screen at 1080p and upload the video to YouTube as **Public**.
 
-**Before recording:**
-- Open the dashboard at https://parthdevai-shipcheck.static.hf.space (or `http://localhost:8000`) with **Load demo** ready.
-- Open [PR #1](https://github.com/8bitaditya/Shipcheck-/pull/1) in a second tab.
-- Open `fixtures/vulnshop/app.py` in the editor, scrolled to `login()`.
-- Optional live beat (recommended): a terminal ready to run `python scripts/record_golden.py --backend docker` — a real scan in under a minute. Showing it run is the strongest proof you have; cut the waiting in the edit.
+## Set up four windows before you start
+
+Arrange these and leave them open; the script only ever switches between them.
+
+| # | Window | Exactly what to open |
+|---|---|---|
+| **A** | Editor | `fixtures/vulnshop/app.py`, scrolled so **lines 38–47** fill the screen (`def login():` through `rows = conn.execute(query).fetchall()`). Line 42 is the `# VULN (SQLi)` comment. |
+| **B** | Terminal | In the repo, venv active: `source .venv/bin/activate`. Type `python -m pytest -q fixtures/vulnshop/test_app.py` but **don't press Enter yet**. |
+| **C** | Browser tab 1 | https://parthdevai-shipcheck.static.hf.space — the results load by themselves. Scroll back to the top. |
+| **D** | Browser tab 2 | https://github.com/8bitaditya/Shipcheck-/pull/1 — scrolled to **"1. Exploit evidence"**. Reopen the PR first if it still says Closed. |
+
+**Card order on the dashboard** (top to bottom): `cmdi` /export · **`sqli` /login** · `traversal` /download · `xss` /search · `xss` (unconfirmed). The SQLi card is the **second** one. It is the card the script spends the most time on, so find it once before recording.
+
+**Optional live beat (recommended):** a fifth window, a terminal ready with `python scripts/record_golden.py --backend docker`. Run it, let it finish, then cut the waiting in the edit. Note it overwrites `golden/vulnshop_scan.json`; run `git checkout -- golden/vulnshop_scan.json` afterwards.
 
 | Time | Screen | Voice-over |
 |---|---|---|
