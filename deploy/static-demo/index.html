@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShipCheck</title>
+<style>
+  :root {
+    --bg:#0b0f17; --panel:#141b26; --panel2:#1b2432; --line:#263142;
+    --text:#e6edf3; --muted:#8b98a9; --accent:#4cc2ff; --ok:#3fb950;
+    --bad:#f85149; --warn:#d29922;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:18px; margin:0; font-weight:650; }
+  header .tag { color:var(--muted); font-size:13px; }
+  main { max-width:960px; margin:0 auto; padding:24px 16px; }
+  .panel { background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:16px; margin-bottom:18px; }
+  textarea { width:100%; background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:10px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  button { background:var(--accent); color:#04121c; border:0; border-radius:8px;
+    padding:9px 16px; font-weight:650; cursor:pointer; }
+  button.secondary { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  .summary { display:flex; gap:20px; flex-wrap:wrap; }
+  .stat { background:var(--panel2); border:1px solid var(--line); border-radius:10px;
+    padding:12px 16px; min-width:120px; }
+  .stat .n { font-size:24px; font-weight:700; }
+  .stat .l { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .finding { border:1px solid var(--line); border-radius:12px; margin-bottom:14px; overflow:hidden; }
+  .finding h3 { margin:0; padding:12px 16px; background:var(--panel2);
+    display:flex; align-items:center; gap:10px; font-size:15px; }
+  .score { font-weight:700; border-radius:999px; padding:3px 10px; font-size:13px; color:#04121c; }
+  .finding .body { padding:14px 16px; }
+  .kv { color:var(--muted); font-size:13px; }
+  .kv code, .excerpt { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .excerpt { display:block; background:var(--bg); border:1px solid var(--line);
+    border-radius:8px; padding:10px; margin:8px 0; white-space:pre-wrap; font-size:12.5px; color:#cfe3f2; }
+  pre.diff { background:var(--bg); border:1px solid var(--line); border-radius:8px;
+    padding:10px; overflow:auto; font-size:12.5px; }
+  pre.diff .add { color:var(--ok); } pre.diff .del { color:var(--bad); }
+  .timeline { display:flex; gap:8px; align-items:center; margin:12px 0; flex-wrap:wrap; }
+  .step { padding:6px 12px; border-radius:999px; border:1px solid var(--line);
+    background:var(--panel2); font-size:13px; }
+  .step.ok { border-color:var(--ok); color:var(--ok); }
+  .step.bad { border-color:var(--bad); color:var(--bad); }
+  .arrow { color:var(--muted); }
+  .gate { font-weight:650; }
+  .gate.pass { color:var(--ok); } .gate.fail { color:var(--bad); }
+  a { color:var(--accent); }
+  .muted { color:var(--muted); }
+  .grounding { border-left:3px solid var(--accent); padding:4px 0 4px 10px; margin:10px 0; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ ShipCheck</h1>
+  <span class="tag">Adversarial verification gate — a human always merges</span>
+</header>
+<main>
+  <div class="panel">
+    <div class="kv">Paste a PR diff and the changed files (JSON: path → content), or load the recorded demo.</div>
+    <div class="row"><textarea id="diff" rows="3" placeholder="diff --git a/app.py b/app.py ..."></textarea></div>
+    <div class="row"><textarea id="files" rows="4" placeholder='{ "app.py": "def login(): ..." }'></textarea></div>
+    <div class="row">
+      <button id="scan">Run scan</button>
+      <button id="demo" class="secondary">Load demo</button>
+      <span id="status" class="muted"></span>
+    </div>
+  </div>
+  <div id="results"></div>
+</main>
+<script>
+// Static build: answer the dashboard's two API calls from the recorded run.
+(function () {
+  const DEMO = {"scan_id":"scan-04a41da2b8e3","commit_sha":"vulnshop-golden","findings":[{"finding_id":"9e404534c315","vuln_class":"cmdi","title":"Detected user input entering a `subprocess` call unsafely. This could result in a command injection vulnerability. An attacker could use this vulnerability to execute arbitrary commands on the host, which allows them to download malware, scan sensitive data, or run any command they wish on the server. Do not let users choose the command to run. In general, prefer to use Python API versions of system commands. If you must use subprocess, use a dictionary to allowlist a set of commands.","description":"Detected user input entering a `subprocess` call unsafely. This could result in a command injection vulnerability. An attacker could use this vulnerability to execute arbitrary commands on the host, which allows them to download malware, scan sensitive data, or run any command they wish on the server. Do not let users choose the command to run. In general, prefer to use Python API versions of system commands. If you must use subprocess, use a dictionary to allowlist a set of commands. Also flagged by: python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use, python.lang.security.audit.subprocess-shell-true.subprocess-shell-true","target":{"file":"fixtures/vulnshop/app.py","line":57,"end_line":59,"sink":"    result = subprocess.run(\n        \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5\n    )","source":null,"endpoint":"/export","code_snippet":"    result = subprocess.run(\n        \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5\n    )"},"probe":{"plan_id":"plan-7fdd12c50c05","vuln_class":"cmdi","target_file":"fixtures/vulnshop/app.py","sink":"subprocess.run(\"ping -c 1 \" + ip, shell=True, ...)","payload_strategy":"command injection via shell metacharacter to execute id","expected_marker":"uid=","route":"/export","http_method":"GET","parameter_name":"ip","suggested_payload":"127.0.0.1; id","headers":{},"rationale":"The ip parameter is unsafely concatenated into a shell command string with shell=True, allowing command separation via semicolon to execute arbitrary commands like id.","finding_id":"9e404534c315"},"evidence":{"evidence_id":"ev-458e4f481b8a","plan_id":"plan-7fdd12c50c05","payload":"127.0.0.1; id","request":{"endpoint":"/export","method":"GET"},"response_status":200,"response_excerpt":"<pre>uid=0(root) gid=0(root) groups=<redacted>\n/bin/sh: 1: ping: not found\n<\/pre>","verdict":"CONFIRMED","marker_found":true,"target_marker":"uid=","matched_text":"uid=","sandbox_branch_id":null,"execution_time_ms":1195.016374986153,"timestamp":"2026-10-29T17:13:49.022425+00:00","truncated":false},"verdict":{"verdict_id":"v-107decaf65c3","finding_id":"9e404534c315","status":"CONFIRMED","score":100.0,"score_breakdown":{"severity":"CRITICAL","severity_base_score":100.0,"confirmed_factor":1.0,"reachability":"DIRECT","reachability_factor":1.0,"exposure":"PUBLIC","exposure_factor":1.0,"final_score":100.0,"explanation":"CRITICAL base score (100) modulated by: confirmed by live sandbox exploit (1.0x), direct reachability (1.0x), and public exposure (1.0x) -> Final Score: 100.0/100."},"summary":"Detected user input entering a `subprocess` call unsafely. This could result in a command injection vulnerability. An attacker could use this vulnerability to execute arbitrary commands on the host, which allows them to download malware, scan sensitive data, or run any command they wish on the server. Do not let users choose the command to run. In general, prefer to use Python API versions of system commands. If you must use subprocess, use a dictionary to allowlist a set of commands. - CONFIRMED vulnerability (100.0/100): Marker 'uid=' verified in sandbox response.","marker_verified":true,"expected_marker":"uid=","observed_marker":"uid=","gate_verdict":"NO_PASS"},"fix":{"fix_id":"fix-69773332e0d5","finding_id":"9e404534c315","hunks":[{"file":"fixtures/vulnshop/app.py","search":"    ip = request.args.get(\"ip\", \"127.0.0.1\")\n    # VULN (command injection): unsanitized value in a shell string.\n    result = subprocess.run(\n        \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5\n    )","replace":"    ip = request.args.get(\"ip\", \"127.0.0.1\")\n    # FIXED: use subprocess without shell, validate IP format\n    import re\n    if not re.match(r'^[a-zA-Z0-9.:\\-]+$', ip):\n        return \"Invalid IP address\", 400\n    result = subprocess.run(\n        [\"ping\", \"-c\", \"1\", ip], shell=False, capture_output=True, text=True, timeout=5\n    )","allow_deletion":false}],"root_cause":"User input was directly concatenated into a shell command string, allowing command injection via shell metacharacters.","explanation":"The fix uses subprocess.run with a list of arguments and shell=False, and validates the IP input to allow only safe characters, preventing injection.","status":"VERIFIED_PASSED","recheck_attack_marker_absent":true,"repo_tests_passed":true,"verification_log":"Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid IP address\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"},"grounding":{"finding_id":"9e404534c315","provider":"tavily","query":"CWE-78 OS command injection result = subprocess.run( \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5 ) Python remediation canonical fix CVE advisory","advisory_ids":["CWE-78","CVE-2020-10221","CVE-2020-9054","CVE-1999-0067","CVE-2001-1246","CVE-2024-6091","CVE-2024-41316","CVE-2024-44335"],"cwe_id":"CWE-78","affected_versions":[],"canonical_fix":"The sources indicate that the use of `subprocess.run()` and `subprocess.Popen()` with `shell=True` in the `AWorld/aworld/virtual_environments/terminals/shell_tool.py` file leads to a significant security vulnerability of type CWE-78: OS Command Injection. This configuration allows an attacker to inject malicious commands into the input, which can then be executed by the system. To remediate this, it is advised to avoid constructing shell commands by incorporating user-supplied or otherwise untrusted data directly into command strings without proper sanitization. Instead, separate user input from the command and use safer alternatives like the `subprocess` module without `shell=True`.","sources":[{"title":"Vulnerability Report: OS Command Injection in shell_tool.py due to subprocess.run() and subprocess.Popen() with shell=Tr","url":"https://github.com/inclusionAI/AWorld/issues/38"},{"title":"CWE - CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection') (4.20)","url":"https://cwe.mitre.org/data/definitions/78.html"},{"title":"Avoid command injection","url":"https://docs.datadoghq.com/security/code_security/static_analysis/static_analysis_rules/python-flask/command-injection"},{"title":"CVE-2020-2029 PAN-OS: OS command injection vulnerability in management interface certificate generator","url":"https://security.paloaltonetworks.com/CVE-2020-2029"},{"title":"Secure by Design Alert: Eliminating OS Command Injection Vulnerabilities | CISA","url":"https://www.cisa.gov/resources-tools/resources/secure-design-alert-eliminating-os-command-injection-vulnerabilities"}],"note":null},"tool":"semgrep","rule_id":"python.flask.security.injection.subprocess-injection.subprocess-injection","severity":"CRITICAL","cve_id":null,"cwe_id":"CWE-78","created_at":"2026-10-29T17:13:42.220566+00:00"},{"finding_id":"e23ba860d016","vuln_class":"sqli","title":"User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`.","description":"User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`. Also flagged by: python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute, python.flask.security.injection.tainted-sql-string.tainted-sql-string","target":{"file":"fixtures/vulnshop/app.py","line":39,"end_line":47,"sink":"    username = request.form.get(\"username\", \"\")\n    password = request.form.get(\"password\", \"\")\n    conn = _db()\n    # VULN (SQLi): user input concatenated straight into the query.\n    query = (\n        \"SELECT username, email FROM users \"\n        \"WHERE username = '%s' AND password = '%s'\" % (username, password)\n    )\n    rows = conn.execute(query).fetchall()","source":null,"endpoint":"/login","code_snippet":"    username = request.form.get(\"username\", \"\")\n    password = request.form.get(\"password\", \"\")\n    conn = _db()\n    # VULN (SQLi): user input concatenated straight into the query.\n    query = (\n        \"SELECT username, email FROM users \"\n        \"WHERE username = '%s' AND password = '%s'\" % (username, password)\n    )\n    rows = conn.execute(query).fetchall()"},"probe":{"plan_id":"plan-96f6aecdc4d3","vuln_class":"sqli","target_file":"fixtures/vulnshop/app.py","sink":"conn.execute(query)","payload_strategy":"boolean authentication bypass via SQL comment","expected_marker":"admin@vulnshop.local","route":"/login","http_method":"POST","parameter_name":"username","suggested_payload":"admin'--","headers":{},"rationale":"The username parameter is directly concatenated into the SQL query string, allowing injection of a comment to bypass the password check and log in as admin.","finding_id":"e23ba860d016"},"evidence":{"evidence_id":"ev-b54b7d74e341","plan_id":"plan-96f6aecdc4d3","payload":"admin'--","request":{"endpoint":"/login","method":"POST"},"response_status":200,"response_excerpt":"Welcome: admin <admin@vulnshop.local>","verdict":"CONFIRMED","marker_found":true,"target_marker":"admin@vulnshop.local","matched_text":"admin@vulnshop.local","sandbox_branch_id":null,"execution_time_ms":988.6984170007054,"timestamp":"2026-10-29T17:13:48.830736+00:00","truncated":false},"verdict":{"verdict_id":"v-a556ab908d63","finding_id":"e23ba860d016","status":"CONFIRMED","score":100.0,"score_breakdown":{"severity":"CRITICAL","severity_base_score":100.0,"confirmed_factor":1.0,"reachability":"DIRECT","reachability_factor":1.0,"exposure":"PUBLIC","exposure_factor":1.0,"final_score":100.0,"explanation":"CRITICAL base score (100) modulated by: confirmed by live sandbox exploit (1.0x), direct reachability (1.0x), and public exposure (1.0x) -> Final Score: 100.0/100."},"summary":"User-controlled data from a request is passed to 'execute()'. This could lead to a SQL injection and therefore protected information could be leaked. Instead, use django's QuerySets, which are built with query parameterization and therefore not vulnerable to sql injection. For example, you could use `Entry.objects.filter(date=2006)`. - CONFIRMED vulnerability (100.0/100): Marker 'admin@vulnshop.local' verified in sandbox response.","marker_verified":true,"expected_marker":"admin@vulnshop.local","observed_marker":"admin@vulnshop.local","gate_verdict":"NO_PASS"},"fix":{"fix_id":"fix-9edea9dd54a5","finding_id":"e23ba860d016","hunks":[{"file":"fixtures/vulnshop/app.py","search":"    username = request.form.get(\"username\", \"\")\n    password = request.form.get(\"password\", \"\")\n    conn = _db()\n    # VULN (SQLi): user input concatenated straight into the query.\n    query = (\n        \"SELECT username, email FROM users \"\n        \"WHERE username = '%s' AND password = '%s'\" % (username, password)\n    )\n    rows = conn.execute(query).fetchall()","replace":"    username = request.form.get(\"username\", \"\")\n    password = request.form.get(\"password\", \"\")\n    conn = _db()\n    # FIXED: Use parameterized query to prevent SQL injection\n    query = \"SELECT username, email FROM users WHERE username = ? AND password = ?\"\n    rows = conn.execute(query, (username, password)).fetchall()","allow_deletion":false}],"root_cause":"User inputs were directly interpolated into the SQL query string without sanitization or parameterization.","explanation":"Replaced string formatting with a parameterized query using placeholders (?), ensuring user input is treated as data, not executable SQL.","status":"VERIFIED_PASSED","recheck_attack_marker_absent":true,"repo_tests_passed":true,"verification_log":"Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid credentials\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.10s\n"},"grounding":{"finding_id":"e23ba860d016","provider":"tavily","query":"CWE-89 SQL injection username = request.form.get(\"username\", \"\") password = request.form.get(\"password\", \"\") conn = _db() # VULN (SQLi): user input concatenated straight into the query. query = ( \"SELECT username, email FROM users \" \"WHERE username = '%s' AND password = '%s'\" % (username, password) ) rows = conn.execute(query).fetchall() Python remediation canonical fix CVE advisory","advisory_ids":["CWE-89","CVE-2026-31844","CVE-2008-2790","CVE-2008-2223","CVE-2007-6602","CVE-2008-5817","CVE-2003-0377","CVE-2008-2380"],"cwe_id":"CWE-89","affected_versions":[],"canonical_fix":"The sources indicate that CWE-89 refers to SQL Injection, a vulnerability where inputs are not sanitized, allowing a user to inject SQL commands into queries. The basic form of SQL injection involves direct insertion of attacker-controlled data into variables used to construct SQL commands, enabling attackers to tamper with the original query. To remediate this, it is recommended to sanitize input data before using it in SQL queries or employ security software like a WAF or IDS/IPS system. In Python, using parameterized queries or an Object Relational Mapper (ORM) like SQLAlchemy can help prevent SQL injections.","sources":[{"title":"SQL Injection Vulnerability | CWE-89 Weakness | Exploitation and Remediation","url":"https://www.immuniweb.com/vulnerability/sql-injection.html"},{"title":"CWE-89: SQL Injection \u2013 Kiuwan","url":"https://support.kiuwan.com/hc/en-us/articles/36260886182545-CWE-89-SQL-Injection"},{"title":"An authenticated SQL Injection vulnerability (CWE-89)... \u00b7 CVE-2026-31844 \u00b7 GitHub Advisory Database \u00b7 GitHub","url":"https://github.com/advisories/GHSA-x6wm-w6mm-jpf2"},{"title":"Present SQL injection in Python (CWE-89)","url":"https://www.codiga.io/blog/python-prevent-sql-injection"},{"title":"CWE - CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection') (4.20)","url":"https://cwe.mitre.org/data/definitions/89.html"}],"note":null},"tool":"semgrep","rule_id":"python.django.security.injection.sql.sql-injection-using-db-cursor-execute.sql-injection-db-cursor-execute","severity":"CRITICAL","cve_id":null,"cwe_id":"CWE-89","created_at":"2026-10-29T17:13:42.218322+00:00"},{"finding_id":"a1e06d645808","vuln_class":"traversal","title":"User input from a Flask request reaches a filesystem path (path traversal); an attacker can use '../' to read files outside the intended directory.","description":"User input from a Flask request reaches a filesystem path (path traversal); an attacker can use '../' to read files outside the intended directory.","target":{"file":"fixtures/vulnshop/app.py","line":68,"end_line":68,"sink":"    with open(path) as handle:","source":null,"endpoint":"/download","code_snippet":"    with open(path) as handle:"},"probe":{"plan_id":"plan-1d8179c9a5c7","vuln_class":"traversal","target_file":"fixtures/vulnshop/app.py","sink":"open(path)","payload_strategy":"directory traversal to read /etc/passwd","expected_marker":"root:","route":"/download","http_method":"GET","parameter_name":"file","suggested_payload":"../../../etc/passwd","headers":{},"rationale":"The file parameter is joined with the base directory without normalization, allowing path traversal sequences to escape the intended directory and read arbitrary files like /etc/passwd.","finding_id":"a1e06d645808"},"evidence":{"evidence_id":"ev-d99969494adb","plan_id":"plan-1d8179c9a5c7","payload":"../../../../../../../../../../../../etc/passwd","request":{"endpoint":"/download","method":"GET"},"response_status":200,"response_excerpt":"root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nsync:x:4:65534:sync:/bin:/bin/sync\ngames:x:5:60:games:/usr/games:/usr/sbin/nologin\nman:x:6:12:man:/var/cache/man:/usr/sbin/nologin\nlp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin\nmail:x:8:8:mail:/var/mail:/usr/sbin/nologin\nnews:x:9:9:news:/var/spool/news:/usr/sbin/nologin\nuucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin\nproxy:x:13:13:proxy:/bin","verdict":"CONFIRMED","marker_found":true,"target_marker":"root:","matched_text":"root:","sandbox_branch_id":null,"execution_time_ms":887.5222080096137,"timestamp":"2026-10-29T17:13:48.722755+00:00","truncated":false},"verdict":{"verdict_id":"v-9780052d7360","finding_id":"a1e06d645808","status":"CONFIRMED","score":100.0,"score_breakdown":{"severity":"CRITICAL","severity_base_score":100.0,"confirmed_factor":1.0,"reachability":"DIRECT","reachability_factor":1.0,"exposure":"PUBLIC","exposure_factor":1.0,"final_score":100.0,"explanation":"CRITICAL base score (100) modulated by: confirmed by live sandbox exploit (1.0x), direct reachability (1.0x), and public exposure (1.0x) -> Final Score: 100.0/100."},"summary":"User input from a Flask request reaches a filesystem path (path traversal); an attacker can use '../' to read files outside the intended directory. - CONFIRMED vulnerability (100.0/100): Marker 'root:' verified in sandbox response.","marker_verified":true,"expected_marker":"root:","observed_marker":"root:","gate_verdict":"NO_PASS"},"fix":{"fix_id":"fix-615bb05dc505","finding_id":"a1e06d645808","hunks":[{"file":"fixtures/vulnshop/app.py","search":"    filename = request.args.get(\"file\", \"readme.txt\")\n    # VULN (path traversal): no normalization or prefix check.\n    path = os.path.join(BASE_DIR, \"files\", filename)\n    with open(path) as handle:\n        return handle.read()","replace":"    filename = request.args.get(\"file\", \"readme.txt\")\n    # FIXED: normalize path and ensure it stays within BASE_DIR/files\n    path = os.path.normpath(os.path.join(BASE_DIR, \"files\", filename))\n    if not path.startswith(os.path.normpath(BASE_DIR + os.sep)):\n        return \"Access denied\", 403\n    with open(path) as handle:\n        return handle.read()","allow_deletion":false}],"root_cause":"User-supplied filename was joined without validation, allowing directory traversal via '../' sequences.","explanation":"Normalize the joined path and verify it resolves within the intended base directory before opening.","status":"VERIFIED_PASSED","recheck_attack_marker_absent":true,"repo_tests_passed":true,"verification_log":"Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Access denied\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"},"grounding":{"finding_id":"a1e06d645808","provider":"tavily","query":"CWE-22 path traversal with open(path) as handle: Python remediation canonical fix CVE advisory","advisory_ids":["CWE-22","CVE-2026-24486","CVE-2022-45918","CVE-2019-20916","CVE-2022-31503","CVE-2022-24877","CWE-73","CWE-20"],"cwe_id":"CWE-22","affected_versions":[],"canonical_fix":"To remediate CWE-22 path traversal in Python's `open()` function, sanitize or validate the input path by resolving it to an absolute path and confirming it remains within an allowed base directory before calling `open()`. Specifically, use `os.path.realpath()` to normalize the input path and verify it stays within the intended base directory. For example, in `tool/update-doc.py`, ensure the resolved path starts with the allowed base directory before opening the file. Orbis AppSec detected and patched this issue by implementing such a fix.","sources":[{"title":"Python open() Path Traversal: Detection & Fix | Orbis AppSec","url":"https://orbisappsec.com/blog/how-path-traversal-in-open-happens-in-python-and-how-to-fix"},{"title":"CVE-2026-24486: Python-Multipart Path Traversal Flaw","url":"https://www.sentinelone.com/vulnerability-database/cve-2026-24486"},{"title":"CWE - CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal') (4.20)","url":"https://cwe.mitre.org/data/definitions/22.html"},{"title":"Security Bulletin: A path traversal vulnerability in file handling components could allow an authenticated attacker to w","url":"https://www.ibm.com/support/pages/security-bulletin-path-traversal-vulnerability-file-handling-components-could-allow-authenticated-attacker-write-files-arbitrary-locations-server-filesystem"},{"title":"Path Traversal Vulnerability | CWE-22 Weakness | Exploitation and Remediation","url":"https://www.immuniweb.com/vulnerability/path-traversal.html"}],"note":null},"tool":"semgrep","rule_id":"tmp.shipcheck.python.flask.path-traversal","severity":"CRITICAL","cve_id":null,"cwe_id":"CWE-22","created_at":"2026-10-29T17:13:42.220625+00:00"},{"finding_id":"a933f45a0bba","vuln_class":"xss","title":"Detected Flask route directly returning a formatted string. This is subject to cross-site scripting if user input can reach the string. Consider using the template engine instead and rendering pages with 'render_template()'.","description":"Detected Flask route directly returning a formatted string. This is subject to cross-site scripting if user input can reach the string. Consider using the template engine instead and rendering pages with 'render_template()'. Also flagged by: python.django.security.injection.raw-html-format.raw-html-format, python.flask.security.injection.raw-html-concat.raw-html-format","target":{"file":"fixtures/vulnshop/app.py","line":60,"end_line":60,"sink":"    return \"<pre>\" + result.stdout + result.stderr + \"<\/pre>\"","source":null,"endpoint":null,"code_snippet":"    return \"<pre>\" + result.stdout + result.stderr + \"<\/pre>\""},"probe":null,"evidence":null,"verdict":{"verdict_id":"v-b7e82a1e771c","finding_id":"a933f45a0bba","status":"UNCONFIRMED","score":2.0,"score_breakdown":{"severity":"HIGH","severity_base_score":80.0,"confirmed_factor":0.05,"reachability":"DIRECT","reachability_factor":1.0,"exposure":"INTERNAL","exposure_factor":0.5,"final_score":2.0,"explanation":"HIGH base score (80) modulated by: UNCONFIRMED by exploit probe (0.05x dampener), direct reachability (1.0x), and internal exposure (0.5x) -> Final Score: 2.0/100."},"summary":"Detected Flask route directly returning a formatted string. This is subject to cross-site scripting if user input can reach the string. Consider using the template engine instead and rendering pages with 'render_template()'. - UNCONFIRMED suspect (2.0/100): Exploit probe did not yield marker ''.","marker_verified":false,"expected_marker":"","observed_marker":null,"gate_verdict":"PASS"},"fix":null,"grounding":null,"tool":"semgrep","rule_id":"python.flask.security.audit.directly-returned-format-string.directly-returned-format-string","severity":"HIGH","cve_id":null,"cwe_id":null,"created_at":"2026-10-29T17:13:42.220594+00:00"},{"finding_id":"ac4384d52f8a","vuln_class":"xss","title":"Detected Flask route directly returning a formatted string. This is subject to cross-site scripting if user input can reach the string. Consider using the template engine instead and rendering pages with 'render_template()'.","description":"Detected Flask route directly returning a formatted string. This is subject to cross-site scripting if user input can reach the string. Consider using the template engine instead and rendering pages with 'render_template()'. Also flagged by: python.django.security.injection.raw-html-format.raw-html-format, python.flask.security.injection.raw-html-concat.raw-html-format","target":{"file":"fixtures/vulnshop/app.py","line":76,"end_line":76,"sink":"    return \"<h1>Results for \" + query + \"<\/h1>\"","source":null,"endpoint":"/search","code_snippet":"    return \"<h1>Results for \" + query + \"<\/h1>\""},"probe":{"plan_id":"plan-caf269ab620b","vuln_class":"xss","target_file":"fixtures/vulnshop/app.py","sink":"return \"<h1>Results for \" + query + \"<\/h1>\"","payload_strategy":"reflected XSS via unescaped user input in HTML response","expected_marker":"<script>alert(1)<\/script>","route":"/search","http_method":"GET","parameter_name":"q","suggested_payload":"<script>alert(1)<\/script>","headers":{},"rationale":"The q parameter is directly concatenated into the HTML response without escaping, causing the browser to execute the injected script payload when the page is rendered.","finding_id":"ac4384d52f8a"},"evidence":{"evidence_id":"ev-f8f4609299a3","plan_id":"plan-caf269ab620b","payload":"<script>alert(1)<\/script>","request":{"endpoint":"/search","method":"GET"},"response_status":200,"response_excerpt":"<h1>Results for <script>alert(1)<\/script><\/h1>","verdict":"CONFIRMED","marker_found":true,"target_marker":"<script>alert(1)<\/script>","matched_text":"<script>alert(1)<\/script>","sandbox_branch_id":null,"execution_time_ms":1069.0155420161318,"timestamp":"2026-10-29T17:13:48.915762+00:00","truncated":false},"verdict":{"verdict_id":"v-15c3d309e87e","finding_id":"ac4384d52f8a","status":"CONFIRMED","score":80.0,"score_breakdown":{"severity":"HIGH","severity_base_score":80.0,"confirmed_factor":1.0,"reachability":"DIRECT","reachability_factor":1.0,"exposure":"PUBLIC","exposure_factor":1.0,"final_score":80.0,"explanation":"HIGH base score (80) modulated by: confirmed by live sandbox exploit (1.0x), direct reachability (1.0x), and public exposure (1.0x) -> Final Score: 80.0/100."},"summary":"Detected Flask route directly returning a formatted string. This is subject to cross-site scripting if user input can reach the string. Consider using the template engine instead and rendering pages with 'render_template()'. - CONFIRMED vulnerability (80.0/100): Marker '<script>alert(1)<\/script>' verified in sandbox response.","marker_verified":true,"expected_marker":"<script>alert(1)<\/script>","observed_marker":"<script>alert(1)<\/script>","gate_verdict":"NO_PASS"},"fix":{"fix_id":"fix-85bdfd757bd3","finding_id":"ac4384d52f8a","hunks":[{"file":"fixtures/vulnshop/app.py","search":"    return \"<h1>Results for \" + query + \"<\/h1>\"","replace":"    from html import escape\n    return \"<h1>Results for \" + escape(query) + \"<\/h1>\"","allow_deletion":false}],"root_cause":"User input was directly concatenated into HTML without escaping, allowing script injection.","explanation":"Escaping the user input with html.escape converts dangerous characters to safe HTML entities, preventing XSS.","status":"VERIFIED_PASSED","recheck_attack_marker_absent":true,"repo_tests_passed":true,"verification_log":"Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: <h1>Results for &lt;script&gt;alert(1)&lt;/script&gt;<\/h1>\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"},"grounding":{"finding_id":"ac4384d52f8a","provider":"tavily","query":"CWE-79 cross-site scripting return \"<h1>Results for \" + query + \"<\/h1>\" Python remediation canonical fix CVE advisory","advisory_ids":["CVE-2026-4512","CVE-2026-88903","CVE-2019-13478","CVE-2026-32890","CWE-79","CWE-7925","CVE-2021-1879","CVE-2020-3580"],"cwe_id":"CWE-79","affected_versions":[],"canonical_fix":"CWE-79, or Cross-Site Scripting (XSS), is a web vulnerability allowing attackers to inject malicious scripts into trusted websites, executed by a victim\u2019s browser. The sources provide examples of XSS vulnerabilities, including CVE-2026-4512 in reCaptcha by WebDesignBy WordPress plugin and CVE-2026-88903 in Topcontent WordPress plugin. To remediate, ensure robust input validation, boundary checking, and use secure escaping libraries or templating engines. The sources also mention CVEs classified under CWE-79, such as CVE-2019-13478 and CVE-2026-32890, with CVSS scores ranging from 9.8 to 7.6. The sources do not provide a definitive answer to the specific remediation fix for Python, but suggest using secure escaping libraries or templating engines.","sources":[{"title":"CWE-79: Cross-site Scripting (XSS) | Precogs AI Security | Precogs AI","url":"https://www.precogs.ai/cwe/CWE-79"},{"title":"CWE - CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting') (4.20)","url":"https://cwe.mitre.org/data/definitions/79.html"},{"title":"What Is CWE-79 (Cross-Site Scripting, XSS)? | Attaxion","url":"https://attaxion.com/glossary/cwe-79-cross-site-scripting"},{"title":"CVE-2026-4512: CWE-79 Cross-Site Scripting (XSS) in\u2026 | Threat Radar","url":"https://radar.offseq.com/threat/cve-2026-4512-cwe-79-cross-site-scripting-xss-in-r-bdf28973"},{"title":"CVE-2026-88903: CWE-79 Cross-Site Scripting (XSS) in\u2026 | Threat Radar","url":"https://radar.offseq.com/threat/cve-2026-88903-cwe-79-cross-site-scripting-xss-in-topcontent-2a3a255318e85e9c"}],"note":null},"tool":"semgrep","rule_id":"python.flask.security.audit.directly-returned-format-string.directly-returned-format-string","severity":"HIGH","cve_id":null,"cwe_id":"CWE-79","created_at":"2026-10-29T17:13:42.220634+00:00"}],"findings_count":5,"confirmed_count":4,"fixed_count":4,"overall_risk_score":100.0,"pull_requests":[{"finding_id":"e23ba860d016","number":1,"url":"https://github.com/8bitaditya/Shipcheck-/pull/1"}]};
+  const CONFIG = {public_demo: true};
+  const json = (body, headers) => new Response(JSON.stringify(body), {
+    status: 200, headers: Object.assign({"Content-Type": "application/json"}, headers || {}),
+  });
+  const real = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const url = String((input && input.url) || input || "");
+    if (url.endsWith("/api/config")) return Promise.resolve(json(CONFIG));
+    if (url.endsWith("/api/demo")) return Promise.resolve(json(DEMO, {"X-ShipCheck-Demo-Source": "golden"}));
+    return real(input, init);
+  };
+})();
+</script>
+<script>
+const $ = s => document.querySelector(s);
+let publicDemo = false;
+const esc = s => (s==null?"":String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl = u => /^https?:\/\/[^\s"'<>`]+$/i.test(u||'') ? u : '#';
+function scoreColor(n){ if(n>=70) return '#f85149'; if(n>=40) return '#d29922'; if(n>0) return '#3fb950'; return '#8b98a9'; }
+
+function diffHtml(fix){
+  if(!fix || !fix.hunks || !fix.hunks.length) return '<span class="muted">No patch.</span>';
+  let out=[];
+  for(const h of fix.hunks){
+    out.push('--- a/'+esc(h.file)); out.push('+++ b/'+esc(h.file));
+    for(const l of (h.search||'').split('\n')) out.push('<span class="del">- '+esc(l)+'</span>');
+    for(const l of (h.replace||'').split('\n')) out.push('<span class="add">+ '+esc(l)+'</span>');
+  }
+  return out.join('\n');
+}
+
+function timeline(f){
+  const ev=f.evidence, fix=f.fix;
+  const landed = ev && ev.marker_found;
+  const steps=[`<span class="step ${landed?'ok':''}">1 · Exploit ${landed?'landed ✅':'not confirmed'}</span>`];
+  if(fix){
+    steps.push('<span class="arrow">→</span>');
+    steps.push(`<span class="step ${fix.recheck_attack_marker_absent?'ok':'bad'}">2 · Patched & re-attacked: marker ${fix.recheck_attack_marker_absent?'gone ✅':'still present ❌'}</span>`);
+    steps.push('<span class="arrow">→</span>');
+    steps.push(`<span class="step ${fix.repo_tests_passed?'ok':'bad'}">3 · Repo tests ${fix.repo_tests_passed?'pass ✅':'fail ❌'}</span>`);
+  }
+  return '<div class="timeline">'+steps.join('')+'</div>';
+}
+
+function groundingHtml(g){
+  if(!g) return '';
+  const live = g.provider === 'tavily';
+  const ids = (g.advisory_ids||[]).map(i=>`<code>${esc(i)}</code>`).join(' ') || '<span class="muted">none found</span>';
+  const vers = (g.affected_versions||[]).length ? g.affected_versions.map(v=>`<code>${esc(v)}</code>`).join(' ')
+    : '<span class="muted">n/a — first-party code</span>';
+  const srcs = (g.sources||[]).map(s=>`<a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>`).join(' · ');
+  return `<div class="grounding">
+    <div class="kv"><strong>Advisory grounding</strong> <span class="pill">${live?'Tavily':'offline reference'}</span></div>
+    <div class="kv">IDs: ${ids} · affected versions: ${vers}</div>
+    <div class="kv">Canonical fix: ${esc(g.canonical_fix||'n/a')}</div>
+    ${srcs?`<div class="kv">Sources: ${srcs}</div>`:''}
+    ${g.note?`<div class="kv muted">${esc(g.note)}</div>`:''}
+  </div>`;
+}
+
+function findingCard(f, prs){
+  const score = f.verdict ? f.verdict.score : 0;
+  const sev = f.severity || (f.verdict && f.verdict.score_breakdown && f.verdict.score_breakdown.severity) || '';
+  const ev = f.evidence || {};
+  const fix = f.fix;
+  const verified = fix && fix.recheck_attack_marker_absent && fix.repo_tests_passed;
+  const pr = (prs||[]).find(p => p.finding_id === f.finding_id);
+  return `<div class="finding">
+    <h3>
+      <span class="score" style="background:${scoreColor(score)}">${score}/100</span>
+      <span>${esc(f.vuln_class)}</span>
+      <span class="muted">· ${esc(f.target && f.target.file)}${f.target&&f.target.endpoint?' ('+esc(f.target.endpoint)+')':''}</span>
+      <span class="pill">${esc(sev)}</span>
+    </h3>
+    <div class="body">
+      <div><strong>${esc(f.title||'')}</strong></div>
+      ${timeline(f)}
+      <div class="kv"><strong>Evidence</strong> — verdict: <code>${esc(ev.verdict||'')}</code></div>
+      <div class="kv">Payload: <code>${esc(ev.payload||'')}</code> · marker: <code>${esc(ev.matched_text||ev.target_marker||'')}</code> · status: <code>${esc(ev.response_status||'')}</code></div>
+      <span class="excerpt">${esc((ev.response_excerpt||'').slice(0,500))}</span>
+      ${groundingHtml(f.grounding)}
+      ${fix?`<div class="kv"><strong>Fix</strong> — ${esc(fix.root_cause||'')}</div>
+      <pre class="diff">${diffHtml(fix)}</pre>
+      <div class="gate ${verified?'pass':'fail'}">${verified?'PASS · draft PR eligible':'NO PASS · no PR (human gate)'}</div>`:''}
+      ${pr?`<div class="kv">Draft PR: <a href="${esc(safeUrl(pr.url))}" target="_blank" rel="noopener noreferrer">#${esc(pr.number)}</a></div>`:''}
+    </div>
+  </div>`;
+}
+
+function render(r){
+  const findings=(r.findings||[]).slice().sort((a,b)=>((b.verdict?b.verdict.score:0)-(a.verdict?a.verdict.score:0)));
+  let html=`<div class="panel summary">
+    <div class="stat"><div class="n">${r.overall_risk_score??0}</div><div class="l">Top risk</div></div>
+    <div class="stat"><div class="n">${r.findings_count??0}</div><div class="l">Findings</div></div>
+    <div class="stat"><div class="n">${r.confirmed_count??0}</div><div class="l">Confirmed</div></div>
+    <div class="stat"><div class="n">${r.fixed_count??0}</div><div class="l">Fixed</div></div>
+    <div class="stat"><div class="n">${(r.pull_requests||[]).length}</div><div class="l">Draft PRs</div></div>
+  </div>`;
+  html += findings.length ? findings.map(f=>findingCard(f, r.pull_requests)).join('')
+    : '<div class="panel muted">No findings.</div>';
+  $('#results').innerHTML = html;
+}
+
+async function load(url, opts){
+  $('#status').textContent='Scanning…';
+  $('#scan').disabled=true; $('#demo').disabled=true;
+  try{
+    const res=await fetch(url, opts);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    render(await res.json());
+    const src=res.headers.get('X-ShipCheck-Demo-Source');
+    $('#status').textContent = src==='golden' ? 'Replayed a recorded real scan (golden run).'
+      : src==='sample' ? 'Showing a hand-built sample (no golden run recorded).' : 'Done.';
+  }catch(e){ $('#status').textContent='Error: '+e.message; }
+  finally{ $('#scan').disabled=publicDemo; $('#demo').disabled=false; }
+}
+
+$('#demo').onclick = () => load('/api/demo');
+// Public demo deployments: no live scans; open straight onto the recorded run.
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  if (!cfg.public_demo) return;
+  publicDemo = true;
+  $('#scan').disabled = true;
+  $('#scan').title = 'Live scans are disabled on the public demo';
+  $('#diff').disabled = true; $('#files').disabled = true;
+  load('/api/demo');
+}).catch(() => {});
+$('#scan').onclick = () => {
+  let files={};
+  try{ files = $('#files').value.trim() ? JSON.parse($('#files').value) : {}; }
+  catch(e){ $('#status').textContent='source files must be valid JSON'; return; }
+  load('/scan', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ diff:$('#diff').value, source_files:files })
+  });
+};
+</script>
+</body>
+</html>

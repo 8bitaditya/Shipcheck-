@@ -134,7 +134,7 @@ pip install -e .
 python -m pytest
 ```
 
-Expected: **129 passed, 10 skipped** (26 contract + 9 sandbox + 3 ConTree-backend + 22 probe-harness + 7 triage + 8 planner + 6 grounding + 21 rectification + 12 orchestrator + 7 PR-bot + 8 API tests; the 6 live vulnshop tests and 4 Docker tests skip unless opted in). With `SHIPCHECK_LIVE=1 SHIPCHECK_DOCKER=1`: 139 passed. CI runs every file on Python 3.11 and 3.12, live vulnshop exploits included.
+Expected: **130 passed, 10 skipped** (26 contract + 9 sandbox + 3 ConTree-backend + 22 probe-harness + 7 triage + 8 planner + 6 grounding + 21 rectification + 12 orchestrator + 7 PR-bot + 9 API tests; the 6 live vulnshop tests and 4 Docker tests skip unless opted in). With `SHIPCHECK_LIVE=1 SHIPCHECK_DOCKER=1`: 140 passed. CI runs every file on Python 3.11 and 3.12, live vulnshop exploits included.
 
 ### Run the dashboard
 
@@ -151,6 +151,8 @@ Open [http://localhost:8000](http://localhost:8000) and click **Load demo** to r
 ```bash
 REGION_ID=eu-north1 scripts/deploy_nebius.sh
 ```
+
+The public URL itself is the **static** build in [deploy/static-demo/](deploy/static-demo/): the dashboard's own page with the recorded run baked in (`python scripts/build_static_demo.py`), so it renders exactly what the app renders, needs no server and cannot spend credits. [deploy/hf-space/](deploy/hf-space/) runs the full container instead, where a host allows it.
 
 Submission material (video script, Devpost text, tooling feedback) is in [docs/submission/](docs/submission/).
 

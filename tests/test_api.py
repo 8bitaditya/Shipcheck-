@@ -5,6 +5,8 @@ The scan runner is overridden with a canned ScanResult so the HTTP layer
 without the real sandbox/LLM pipeline.
 """
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -116,3 +118,26 @@ def test_public_demo_disables_live_scans(client, monkeypatch):
 
 def test_live_scans_allowed_by_default(client):
     assert client.get("/api/config").json() == {"public_demo": False}
+
+
+def test_static_demo_build_matches_the_app(tmp_path):
+    """The static public demo is built from the live dashboard + golden run."""
+    import json
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "build_static_demo.py"
+    out = tmp_path / "index.html"
+    src = script.read_text().replace(
+        'OUT = REPO / "deploy" / "static-demo" / "index.html"', f'OUT = Path(r"{out}")'
+    )
+    exec(compile(src, str(script), "exec"), {"__name__": "__main__", "__file__": str(script)})
+
+    html = out.read_text()
+    assert "const $ = s => document.querySelector(s);" in html  # the real dashboard code
+    assert 'id="scan"' in html and "groundingHtml" in html
+    # the shim answers the dashboard's two calls from the recording
+    assert '"X-ShipCheck-Demo-Source": "golden"' in html
+    assert "/api/config" in html and "/api/demo" in html
+    golden = json.loads((Path(__file__).resolve().parent.parent / "golden" / "vulnshop_scan.json").read_text())
+    assert f'"confirmed_count":{golden["confirmed_count"]}' in html
+    assert "</script>" not in html.split("const DEMO = ")[1].split("\n")[0]  # data can't break out
+    assert len(html) < 2_000_000
