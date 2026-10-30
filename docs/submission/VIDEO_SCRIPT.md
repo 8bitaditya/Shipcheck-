@@ -6,7 +6,7 @@ This follows the PRD §10 beats. The audio must cover Token Factory and Nemotron
 - Open the dashboard at https://parthdevai-shipcheck.static.hf.space (or `http://localhost:8000`) with **Load demo** ready.
 - Open [PR #1](https://github.com/8bitaditya/Shipcheck-/pull/1) in a second tab.
 - Open `fixtures/vulnshop/app.py` in the editor, scrolled to `login()`.
-- Optional live beat (recommended): a terminal ready to run `python scripts/record_golden.py --backend docker` — a real scan in ~40 s. Showing it run is the strongest proof you have; cut the waiting in the edit.
+- Optional live beat (recommended): a terminal ready to run `python scripts/record_golden.py --backend docker` — a real scan in under a minute. Showing it run is the strongest proof you have; cut the waiting in the edit.
 
 | Time | Screen | Voice-over |
 |---|---|---|
@@ -21,5 +21,5 @@ This follows the PRD §10 beats. The audio must cover Token Factory and Nemotron
 
 ## Notes
 - **Keep the facts as stated.** Nano isn't used, and the recorded run used Docker sandboxes because the Nebius Sandboxes beta has not been granted yet. If access arrives and the golden run is re-recorded on ConTree, change the last line to "runs in Nebius Token Factory Sandboxes".
-- **If you show the optional live run**, cut the waiting; a real scan takes about 40 s.
+- **If you show the optional live run**, cut the waiting; a real scan takes 40-55 s depending on how much the fixer retries.
 - **Speak at about 150 words per minute.** The voice-over above is about 430 words.

@@ -30,7 +30,7 @@ For each PR, ShipCheck runs a five-stage loop:
 4. **Fix:** **Nemotron 3 Super** writes a patch from the exploit evidence. ShipCheck applies it in a forked sandbox, **re-runs the exact attack** (the marker must be gone) and **runs the repo's tests** (they must pass). If either check fails, Super gets the failure output and tries again. No PASS, No PR.
 5. **Hand-off:** a **draft** PR with the evidence, advisories, root cause, diff, re-verification and a reviewer checklist. ShipCheck never merges.
 
-On our `vulnshop` demo app, a real run confirms **4 of 4** planted bugs (SQLi, command injection, path traversal, reflected XSS), fixes all four, re-verifies them, and opened a real draft PR, in about 40 seconds.
+On our `vulnshop` demo app, a real run confirms **4 of 4** planted bugs (SQLi, command injection, path traversal, reflected XSS), fixes all four, re-verifies them, and opened a real draft PR, in under a minute.
 
 ## How we built it
 

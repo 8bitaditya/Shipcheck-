@@ -42,7 +42,7 @@ For every pull request, ShipCheck runs a five-stage loop:
 4. **Fix** — **Nemotron 3 Super** writes a patch from the exploit evidence. ShipCheck applies it in a forked sandbox, **re-runs the exact same attack** (the marker must be gone) and **runs the repo's own tests** (they must pass). If either check fails, Super gets the failure output and tries again. No PASS, No PR.
 5. **Hand-off** — a **draft** pull request containing the exploit evidence, the advisories, the root cause, the diff, the re-verification result and a reviewer checklist. ShipCheck never merges. A human decides.
 
-On our `vulnshop` demo app, a real run confirms **4 of 4** planted vulnerabilities, fixes all four, re-verifies them and opens a real draft PR — in about 39 seconds.
+On our `vulnshop` demo app, a real run confirms **4 of 4** planted vulnerabilities, fixes all four, re-verifies them and opens a real draft PR — in under a minute.
 
 ## How we built it
 
@@ -161,7 +161,7 @@ What we did instead:
 ```
 We built the pipeline on Nemotron rather than benchmarking models side by side, so this is a qualitative comparison with our general experience of using LLMs for structured code tasks.
 
-Where it stood out: instruction and schema following. Ultra reproduced our requested JSON shape literally and consistently, which is exactly what you want when the output is fed to a validator rather than a human. Latency on Token Factory was 0.5–2 s for small calls across Nano, Super and Ultra, and a complete scan — one Ultra planning call plus up to three Super fix calls per finding, with live exploits in between — finishes in about 39 seconds.
+Where it stood out: instruction and schema following. Ultra reproduced our requested JSON shape literally and consistently, which is exactly what you want when the output is fed to a validator rather than a human. Latency on Token Factory was 0.5–2 s for small calls across Nano, Super and Ultra, and a complete scan — one Ultra planning call plus up to three Super fix calls per finding, with live exploits in between — finishes in under a minute (39–54 s across our runs).
 
 Where it behaved like most models we have used: no guaranteed structured output, and small recurring formatting quirks in long literal strings. Our answer was not a better model but a stricter gate: nothing the model writes is accepted until an exploit and a test suite agree.
 ```
@@ -233,7 +233,7 @@ Devpost wants a **3:2 ratio**, up to 15 images. Six is plenty. Order matters: th
 | 1 | **Dashboard, top of page** — headline, stat row (100 top risk, 5 findings, 4 confirmed, 4 fixed, 1 draft PR) and the first finding's timeline | The whole pitch in one frame: found, proven, fixed, handed over | ✅ `media/01-dashboard.jpg` |
 | 2 | **The SQL-injection card in full** — timeline, payload `admin'--`, observed marker `admin@vulnshop.local`, the Tavily advisory block with CWE-89 and CVE IDs, and the fix diff | The proof *and* the Tavily grounding in one image. This is the strongest frame you have, and the Tavily prize is judged on exactly this | ✅ `media/02-evidence-and-tavily.jpg` |
 | 3 | **The draft PR on GitHub** — scroll to the body: exploit evidence, advisory grounding, root cause, diff, "ShipCheck never auto-merges" | Shows the hand-off is real, not a mock-up | ⬜ yours: open [PR #1](https://github.com/8bitaditya/Shipcheck-/pull/1), Cmd+Shift+4 |
-| 4 | **Terminal mid-scan** — the output of `python scripts/record_golden.py --backend docker` with the 39 s summary | Proves the scan is real and reproducible, not a canned JSON | ⬜ yours |
+| 4 | **Terminal mid-scan** — the output of `python scripts/record_golden.py --backend docker` with the result summary | Proves the scan is real and reproducible, not a canned JSON | ⬜ yours |
 | 5 | **Green CI** — GitHub Actions showing 3.11 and 3.12 passing | Quiet credibility: it is tested | ⬜ yours |
 
 I generated 1 and 2 from the live demo at 3:2. For the rest, press **Cmd+Shift+4** then **Space** to capture a clean window.

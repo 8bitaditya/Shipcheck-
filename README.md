@@ -214,7 +214,7 @@ SHIPCHECK_PUBLIC_DEMO=1 SHIPCHECK_LIVE_DEMO_SCAN=1 SANDBOX_BACKEND=docker \
   uvicorn shipcheck.api.main:app --port 8000
 ```
 
-`POST /api/demo-scan` runs a **real** scan (~40 s) of the bundled `fixtures/vulnshop` and nothing else: it takes no request body, so no visitor-supplied code is ever run. One scan runs at a time, capped at `SHIPCHECK_LIVE_DEMO_MAX_PER_HOUR` (default 6) so visitors cannot drain model credits, and the dashboard shows a **Run a live scan now** button only when the server reports it enabled. Use the `docker` or `contree` backend for this: on the local backend the target app and its exploit payloads run in the same process tree as your API keys.
+`POST /api/demo-scan` runs a **real** scan (under a minute) of the bundled `fixtures/vulnshop` and nothing else: it takes no request body, so no visitor-supplied code is ever run. One scan runs at a time, capped at `SHIPCHECK_LIVE_DEMO_MAX_PER_HOUR` (default 6) so visitors cannot drain model credits, and the dashboard shows a **Run a live scan now** button only when the server reports it enabled. Use the `docker` or `contree` backend for this: on the local backend the target app and its exploit payloads run in the same process tree as your API keys.
 
 **Re-record the golden run** after changing the pipeline (needs the keys; `--backend docker` needs the probe image, the default local backend needs the scanners above):
 
