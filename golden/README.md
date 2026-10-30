@@ -4,7 +4,7 @@
 
 ## How it was recorded
 
-- **Date:** 2026-10-29
+- **Date:** 2026-10-30
 - **Command:** `python scripts/record_golden.py --backend docker` (one scan, then redaction)
 - **Triage:** real scanners — semgrep 1.182.1 (`p/owasp-top-ten` plus ShipCheck's path-traversal rule), gitleaks 8.30.1, osv-scanner 2.7.0, pip-audit 2.10.1
 - **Planning:** `nvidia/Nemotron-3-Ultra-550b-a55b`; all 4 plans came from the model, none from templates

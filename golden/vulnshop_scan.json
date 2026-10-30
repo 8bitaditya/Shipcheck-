@@ -1,5 +1,5 @@
 {
-  "scan_id": "scan-04a41da2b8e3",
+  "scan_id": "scan-3303e0c3d0ed",
   "commit_sha": "vulnshop-golden",
   "findings": [
     {
@@ -17,41 +17,41 @@
         "code_snippet": "    result = subprocess.run(\n        \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5\n    )"
       },
       "probe": {
-        "plan_id": "plan-7fdd12c50c05",
+        "plan_id": "plan-c2dcf6dc8dc8",
         "vuln_class": "cmdi",
         "target_file": "fixtures/vulnshop/app.py",
         "sink": "subprocess.run(\"ping -c 1 \" + ip, shell=True, ...)",
-        "payload_strategy": "command injection via shell metacharacter to execute id",
+        "payload_strategy": "command injection via shell metacharacters",
         "expected_marker": "uid=",
         "route": "/export",
         "http_method": "GET",
         "parameter_name": "ip",
         "suggested_payload": "127.0.0.1; id",
         "headers": {},
-        "rationale": "The ip parameter is unsafely concatenated into a shell command string with shell=True, allowing command separation via semicolon to execute arbitrary commands like id.",
+        "rationale": "The ip parameter is directly concatenated into a shell command string with shell=True, allowing command separators to execute arbitrary commands like 'id' whose output contains 'uid='.",
         "finding_id": "9e404534c315"
       },
       "evidence": {
-        "evidence_id": "ev-458e4f481b8a",
-        "plan_id": "plan-7fdd12c50c05",
+        "evidence_id": "ev-b9a178c92e59",
+        "plan_id": "plan-c2dcf6dc8dc8",
         "payload": "127.0.0.1; id",
         "request": {
           "endpoint": "/export",
           "method": "GET"
         },
         "response_status": 200,
-        "response_excerpt": "<pre>uid=0(root) gid=0(root) groups=<redacted>\n/bin/sh: 1: ping: not found\n</pre>",
+        "response_excerpt": "<pre>PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.\n64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.171 ms\n\n--- 127.0.0.1 ping statistics ---\n1 packets transmitted, 1 received, 0% packet loss, time 0ms\nrtt min/avg/max/mdev = 0.171/0.171/0.171/0.000 ms\nuid=0(root) gid=0(root) groups=<redacted>\n</pre>",
         "verdict": "CONFIRMED",
         "marker_found": true,
         "target_marker": "uid=",
         "matched_text": "uid=",
         "sandbox_branch_id": null,
-        "execution_time_ms": 1195.016374986153,
-        "timestamp": "2026-10-29T17:13:49.022425+00:00",
+        "execution_time_ms": 1085.7286250102334,
+        "timestamp": "2026-10-30T05:28:13.649490+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-107decaf65c3",
+        "verdict_id": "v-edcaa0e1d7e7",
         "finding_id": "9e404534c315",
         "status": "CONFIRMED",
         "score": 100.0,
@@ -73,22 +73,22 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-69773332e0d5",
+        "fix_id": "fix-71ed5fb327b0",
         "finding_id": "9e404534c315",
         "hunks": [
           {
             "file": "fixtures/vulnshop/app.py",
             "search": "    ip = request.args.get(\"ip\", \"127.0.0.1\")\n    # VULN (command injection): unsanitized value in a shell string.\n    result = subprocess.run(\n        \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5\n    )",
-            "replace": "    ip = request.args.get(\"ip\", \"127.0.0.1\")\n    # FIXED: use subprocess without shell, validate IP format\n    import re\n    if not re.match(r'^[a-zA-Z0-9.:\\-]+$', ip):\n        return \"Invalid IP address\", 400\n    result = subprocess.run(\n        [\"ping\", \"-c\", \"1\", ip], shell=False, capture_output=True, text=True, timeout=5\n    )",
+            "replace": "    ip = request.args.get(\"ip\", \"127.0.0.1\")\n    # FIXED: use subprocess without shell, validate input\n    import shlex\n    args = shlex.split(\"ping -c 1\")\n    args.append(ip)\n    result = subprocess.run(args, shell=False, capture_output=True, text=True, timeout=5)",
             "allow_deletion": false
           }
         ],
         "root_cause": "User input was directly concatenated into a shell command string, allowing command injection via shell metacharacters.",
-        "explanation": "The fix uses subprocess.run with a list of arguments and shell=False, and validates the IP input to allow only safe characters, preventing injection.",
+        "explanation": "Using subprocess.run with a list of arguments and shell=False prevents injection by treating user input as a single argument rather than executable code.",
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
-        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid IP address\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"
+        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: <pre>ping: 127.0.0.1; id: Name or service not known\n</pre>\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"
       },
       "grounding": {
         "finding_id": "9e404534c315",
@@ -96,37 +96,37 @@
         "query": "CWE-78 OS command injection result = subprocess.run( \"ping -c 1 \" + ip, shell=True, capture_output=True, text=True, timeout=5 ) Python remediation canonical fix CVE advisory",
         "advisory_ids": [
           "CWE-78",
-          "CVE-2020-10221",
-          "CVE-2020-9054",
-          "CVE-1999-0067",
-          "CVE-2001-1246",
-          "CVE-2024-6091",
-          "CVE-2024-41316",
-          "CVE-2024-44335"
+          "CVE-2026-22708",
+          "CVE-2024-48889",
+          "CVE-2024-48891",
+          "CVE-2025-20393",
+          "CVE-2026-32056",
+          "CVE-2026-4499",
+          "CVE-2026-4497"
         ],
         "cwe_id": "CWE-78",
         "affected_versions": [],
-        "canonical_fix": "The sources indicate that the use of `subprocess.run()` and `subprocess.Popen()` with `shell=True` in the `AWorld/aworld/virtual_environments/terminals/shell_tool.py` file leads to a significant security vulnerability of type CWE-78: OS Command Injection. This configuration allows an attacker to inject malicious commands into the input, which can then be executed by the system. To remediate this, it is advised to avoid constructing shell commands by incorporating user-supplied or otherwise untrusted data directly into command strings without proper sanitization. Instead, separate user input from the command and use safer alternatives like the `subprocess` module without `shell=True`.",
+        "canonical_fix": "The canonical fix for CWE-78 OS command injection in Python involves removing `shell=True` from `subprocess.run()` and using a list-based argument structure to prevent shell metacharacter interpretation. The remediation also includes strict input validation with allowlists, running applications with minimal OS privileges, and scanning the entire codebase for all instances of OS command injection. The vulnerability, ranked #5 on MITRE's 2023 CWE Top 25 Most Dangerous Software Weaknesses, can lead to full server compromise, arbitrary OS command execution, data exfiltration, and network attacks.",
         "sources": [
           {
-            "title": "Vulnerability Report: OS Command Injection in shell_tool.py due to subprocess.run() and subprocess.Popen() with shell=Tr",
-            "url": "https://github.com/inclusionAI/AWorld/issues/38"
+            "title": "Python shell=True Command Injection Fix | Orbis AppSec",
+            "url": "https://orbisappsec.com/blog/command-injection-via-shelltrue-how-one-flag-opens-the-door-to-os-takeover"
           },
           {
-            "title": "CWE - CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection') (4.20)",
-            "url": "https://cwe.mitre.org/data/definitions/78.html"
+            "title": "Python - CWE Remediation Guidance",
+            "url": "https://dipsylala.github.io/FlawFixingGuidance/CWE-78/python"
           },
           {
-            "title": "Avoid command injection",
-            "url": "https://docs.datadoghq.com/security/code_security/static_analysis/static_analysis_rules/python-flask/command-injection"
+            "title": "Python Command Injection: Examples & Prevention",
+            "url": "https://safeguard.sh/resources/blog/command-injection-in-python-examples-and-prevention"
           },
           {
-            "title": "CVE-2020-2029 PAN-OS: OS command injection vulnerability in management interface certificate generator",
-            "url": "https://security.paloaltonetworks.com/CVE-2020-2029"
+            "title": "How to Fix CWE-78: OS Command Injection | Precogs AI | Precogs AI",
+            "url": "https://precogs.ai/fix/cwe-78-os-command-injection"
           },
           {
-            "title": "Secure by Design Alert: Eliminating OS Command Injection Vulnerabilities | CISA",
-            "url": "https://www.cisa.gov/resources-tools/resources/secure-design-alert-eliminating-os-command-injection-vulnerabilities"
+            "title": "How to Fix CWE-78: OS Command Injection | Precogs AI | Precogs AI",
+            "url": "https://www.precogs.ai/fix/cwe-78-os-command-injection"
           }
         ],
         "note": null
@@ -136,7 +136,7 @@
       "severity": "CRITICAL",
       "cve_id": null,
       "cwe_id": "CWE-78",
-      "created_at": "2026-10-29T17:13:42.220566+00:00"
+      "created_at": "2026-10-30T05:28:01.870257+00:00"
     },
     {
       "finding_id": "e23ba860d016",
@@ -153,24 +153,24 @@
         "code_snippet": "    username = request.form.get(\"username\", \"\")\n    password = request.form.get(\"password\", \"\")\n    conn = _db()\n    # VULN (SQLi): user input concatenated straight into the query.\n    query = (\n        \"SELECT username, email FROM users \"\n        \"WHERE username = '%s' AND password = '%s'\" % (username, password)\n    )\n    rows = conn.execute(query).fetchall()"
       },
       "probe": {
-        "plan_id": "plan-96f6aecdc4d3",
+        "plan_id": "plan-b1c3efabe4ed",
         "vuln_class": "sqli",
         "target_file": "fixtures/vulnshop/app.py",
-        "sink": "conn.execute(query)",
-        "payload_strategy": "boolean authentication bypass via SQL comment",
+        "sink": "conn.execute(query).fetchall()",
+        "payload_strategy": "boolean authentication bypass via SQL injection",
         "expected_marker": "admin@vulnshop.local",
         "route": "/login",
         "http_method": "POST",
         "parameter_name": "username",
-        "suggested_payload": "admin'--",
+        "suggested_payload": "admin' --",
         "headers": {},
-        "rationale": "The username parameter is directly concatenated into the SQL query string, allowing injection of a comment to bypass the password check and log in as admin.",
+        "rationale": "The username parameter is directly concatenated into the SQL query without sanitization, allowing SQL comment syntax to bypass password check and return the admin user's email.",
         "finding_id": "e23ba860d016"
       },
       "evidence": {
-        "evidence_id": "ev-b54b7d74e341",
-        "plan_id": "plan-96f6aecdc4d3",
-        "payload": "admin'--",
+        "evidence_id": "ev-f1dd2a3cc873",
+        "plan_id": "plan-b1c3efabe4ed",
+        "payload": "admin' --",
         "request": {
           "endpoint": "/login",
           "method": "POST"
@@ -182,12 +182,12 @@
         "target_marker": "admin@vulnshop.local",
         "matched_text": "admin@vulnshop.local",
         "sandbox_branch_id": null,
-        "execution_time_ms": 988.6984170007054,
-        "timestamp": "2026-10-29T17:13:48.830736+00:00",
+        "execution_time_ms": 837.903167004697,
+        "timestamp": "2026-10-30T05:28:13.395460+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-a556ab908d63",
+        "verdict_id": "v-492cfdb71610",
         "finding_id": "e23ba860d016",
         "status": "CONFIRMED",
         "score": 100.0,
@@ -209,7 +209,7 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-9edea9dd54a5",
+        "fix_id": "fix-33786e802f78",
         "finding_id": "e23ba860d016",
         "hunks": [
           {
@@ -219,12 +219,12 @@
             "allow_deletion": false
           }
         ],
-        "root_cause": "User inputs were directly interpolated into the SQL query string without sanitization or parameterization.",
-        "explanation": "Replaced string formatting with a parameterized query using placeholders (?), ensuring user input is treated as data, not executable SQL.",
+        "root_cause": "User inputs were directly interpolated into the SQL query string without sanitization, allowing attackers to break out of quoted literals.",
+        "explanation": "Replaced string formatting with parameterized query placeholders (?), ensuring user input is treated strictly as data by the SQLite engine.",
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
-        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid credentials\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.10s\n"
+        "verification_log": "Re-probe verdict: UNCONFIRMED (marker_found=False)\nRe-probe excerpt: Invalid credentials\nRepo tests exit_code=0\nTest output: ....                                                                     [100%]\n4 passed in 0.08s\n"
       },
       "grounding": {
         "finding_id": "e23ba860d016",
@@ -232,37 +232,32 @@
         "query": "CWE-89 SQL injection username = request.form.get(\"username\", \"\") password = request.form.get(\"password\", \"\") conn = _db() # VULN (SQLi): user input concatenated straight into the query. query = ( \"SELECT username, email FROM users \" \"WHERE username = '%s' AND password = '%s'\" % (username, password) ) rows = conn.execute(query).fetchall() Python remediation canonical fix CVE advisory",
         "advisory_ids": [
           "CWE-89",
-          "CVE-2026-31844",
-          "CVE-2008-2790",
-          "CVE-2008-2223",
-          "CVE-2007-6602",
-          "CVE-2008-5817",
-          "CVE-2003-0377",
-          "CVE-2008-2380"
+          "CVE-2026-2584",
+          "CVE-2026-32714"
         ],
         "cwe_id": "CWE-89",
         "affected_versions": [],
-        "canonical_fix": "The sources indicate that CWE-89 refers to SQL Injection, a vulnerability where inputs are not sanitized, allowing a user to inject SQL commands into queries. The basic form of SQL injection involves direct insertion of attacker-controlled data into variables used to construct SQL commands, enabling attackers to tamper with the original query. To remediate this, it is recommended to sanitize input data before using it in SQL queries or employ security software like a WAF or IDS/IPS system. In Python, using parameterized queries or an Object Relational Mapper (ORM) like SQLAlchemy can help prevent SQL injections.",
+        "canonical_fix": "The sources indicate that the vulnerability in question is classified as CWE-89, known as SQL Injection. This flaw arises from improper input validation and sanitization in the authentication module's query construction, where user-supplied input is directly incorporated into SQL queries without adequate filtering, escaping, or parameterization. To remediate this, the sources recommend using parameterized queries to treat user inputs as parameters rather than parts of the executable SQL command, which helps safeguard against SQL injection threats. This practice is essential in developing secure applications and underscores the importance of validating and sanitizing user inputs.",
         "sources": [
           {
-            "title": "SQL Injection Vulnerability | CWE-89 Weakness | Exploitation and Remediation",
-            "url": "https://www.immuniweb.com/vulnerability/sql-injection.html"
+            "title": "CVE-2026-2584: Authentication Module SQLi Vulnerability",
+            "url": "https://www.sentinelone.com/vulnerability-database/cve-2026-2584"
           },
           {
-            "title": "CWE-89: SQL Injection \u2013 Kiuwan",
-            "url": "https://support.kiuwan.com/hc/en-us/articles/36260886182545-CWE-89-SQL-Injection"
+            "title": "Fixing SQL Injection Vulnerabilities in Flask (Python)",
+            "url": "https://www.stackhawk.com/blog/finding-and-fixing-sql-injection-vulnerabilities-in-flask-python"
           },
           {
-            "title": "An authenticated SQL Injection vulnerability (CWE-89)... \u00b7 CVE-2026-31844 \u00b7 GitHub Advisory Database \u00b7 GitHub",
-            "url": "https://github.com/advisories/GHSA-x6wm-w6mm-jpf2"
+            "title": "SciTokens is vulnerable to SQL Injection in KeyCache \u00b7 CVE-2026-32714 \u00b7 GitHub Advisory Database \u00b7 GitHub",
+            "url": "https://github.com/advisories/GHSA-rh5m-2482-966c"
           },
           {
-            "title": "Present SQL injection in Python (CWE-89)",
-            "url": "https://www.codiga.io/blog/python-prevent-sql-injection"
+            "title": "SQL Injection - SQL Server | Microsoft Learn",
+            "url": "https://learn.microsoft.com/en-us/sql/relational-databases/security/sql-injection?view=sql-server-ver17"
           },
           {
-            "title": "CWE - CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection') (4.20)",
-            "url": "https://cwe.mitre.org/data/definitions/89.html"
+            "title": "SQL injection - Glossary | MDN",
+            "url": "https://developer.mozilla.org/en-US/docs/Glossary/SQL_Injection"
           }
         ],
         "note": null
@@ -272,7 +267,7 @@
       "severity": "CRITICAL",
       "cve_id": null,
       "cwe_id": "CWE-89",
-      "created_at": "2026-10-29T17:13:42.218322+00:00"
+      "created_at": "2026-10-30T05:28:01.869386+00:00"
     },
     {
       "finding_id": "a1e06d645808",
@@ -289,23 +284,23 @@
         "code_snippet": "    with open(path) as handle:"
       },
       "probe": {
-        "plan_id": "plan-1d8179c9a5c7",
+        "plan_id": "plan-3a6cf060faf5",
         "vuln_class": "traversal",
         "target_file": "fixtures/vulnshop/app.py",
-        "sink": "open(path)",
-        "payload_strategy": "directory traversal to read /etc/passwd",
+        "sink": "with open(path) as handle:",
+        "payload_strategy": "path traversal via directory traversal sequences",
         "expected_marker": "root:",
         "route": "/download",
         "http_method": "GET",
         "parameter_name": "file",
-        "suggested_payload": "../../../etc/passwd",
+        "suggested_payload": "../../../../etc/passwd",
         "headers": {},
-        "rationale": "The file parameter is joined with the base directory without normalization, allowing path traversal sequences to escape the intended directory and read arbitrary files like /etc/passwd.",
+        "rationale": "The file parameter is joined with a base directory without path normalization, allowing directory traversal sequences to read arbitrary files like /etc/passwd which contains 'root:'.",
         "finding_id": "a1e06d645808"
       },
       "evidence": {
-        "evidence_id": "ev-d99969494adb",
-        "plan_id": "plan-1d8179c9a5c7",
+        "evidence_id": "ev-4b1a642ce8a8",
+        "plan_id": "plan-3a6cf060faf5",
         "payload": "../../../../../../../../../../../../etc/passwd",
         "request": {
           "endpoint": "/download",
@@ -318,12 +313,12 @@
         "target_marker": "root:",
         "matched_text": "root:",
         "sandbox_branch_id": null,
-        "execution_time_ms": 887.5222080096137,
-        "timestamp": "2026-10-29T17:13:48.722755+00:00",
+        "execution_time_ms": 941.0860000061803,
+        "timestamp": "2026-10-30T05:28:13.483974+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-9780052d7360",
+        "verdict_id": "v-3c13b9a2703f",
         "finding_id": "a1e06d645808",
         "status": "CONFIRMED",
         "score": 100.0,
@@ -345,18 +340,18 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-615bb05dc505",
+        "fix_id": "fix-4b3fef4d881d",
         "finding_id": "a1e06d645808",
         "hunks": [
           {
             "file": "fixtures/vulnshop/app.py",
             "search": "    filename = request.args.get(\"file\", \"readme.txt\")\n    # VULN (path traversal): no normalization or prefix check.\n    path = os.path.join(BASE_DIR, \"files\", filename)\n    with open(path) as handle:\n        return handle.read()",
-            "replace": "    filename = request.args.get(\"file\", \"readme.txt\")\n    # FIXED: normalize path and ensure it stays within BASE_DIR/files\n    path = os.path.normpath(os.path.join(BASE_DIR, \"files\", filename))\n    if not path.startswith(os.path.normpath(BASE_DIR + os.sep)):\n        return \"Access denied\", 403\n    with open(path) as handle:\n        return handle.read()",
+            "replace": "    filename = request.args.get(\"file\", \"readme.txt\")\n    # FIX: prevent path traversal by resolving and checking prefix\n    requested_path = os.path.join(BASE_DIR, \"files\", filename)\n    resolved_path = os.path.realpath(requested_path)\n    if not resolved_path.startswith(os.path.realpath(os.path.join(BASE_DIR, \"files\"))):\n        return \"Access denied\", 403\n    with open(resolved_path) as handle:\n        return handle.read()",
             "allow_deletion": false
           }
         ],
-        "root_cause": "User-supplied filename was joined without validation, allowing directory traversal via '../' sequences.",
-        "explanation": "Normalize the joined path and verify it resolves within the intended base directory before opening.",
+        "root_cause": "The application joined user-supplied filename with BASE_DIR/files without validating that the resulting path stays within the intended directory.",
+        "explanation": "Resolving the absolute path and ensuring it starts with the resolved base directory prevents directory traversal outside the allowed files folder.",
         "status": "VERIFIED_PASSED",
         "recheck_attack_marker_absent": true,
         "repo_tests_passed": true,
@@ -378,12 +373,8 @@
         ],
         "cwe_id": "CWE-22",
         "affected_versions": [],
-        "canonical_fix": "To remediate CWE-22 path traversal in Python's `open()` function, sanitize or validate the input path by resolving it to an absolute path and confirming it remains within an allowed base directory before calling `open()`. Specifically, use `os.path.realpath()` to normalize the input path and verify it stays within the intended base directory. For example, in `tool/update-doc.py`, ensure the resolved path starts with the allowed base directory before opening the file. Orbis AppSec detected and patched this issue by implementing such a fix.",
+        "canonical_fix": "To remediate the CWE-22 path traversal vulnerability in Python, the sources recommend upgrading Python-Multipart to version 0.0.22 or later. The fix involves using os.path.basename() to strip directory components from user-supplied filenames. Additionally, the sources advise auditing applications for the vulnerable configuration combination (UPLOAD_DIR with UPLOAD_KEEP_FILENAME=True) and implementing additional input validation at the application layer as defense-in-depth.",
         "sources": [
-          {
-            "title": "Python open() Path Traversal: Detection & Fix | Orbis AppSec",
-            "url": "https://orbisappsec.com/blog/how-path-traversal-in-open-happens-in-python-and-how-to-fix"
-          },
           {
             "title": "CVE-2026-24486: Python-Multipart Path Traversal Flaw",
             "url": "https://www.sentinelone.com/vulnerability-database/cve-2026-24486"
@@ -397,6 +388,10 @@
             "url": "https://www.ibm.com/support/pages/security-bulletin-path-traversal-vulnerability-file-handling-components-could-allow-authenticated-attacker-write-files-arbitrary-locations-server-filesystem"
           },
           {
+            "title": "Path Traversal (CWE-22): Detect and Fix | Offensive360",
+            "url": "https://offensive360.com/knowledge-base/path-traversal"
+          },
+          {
             "title": "Path Traversal Vulnerability | CWE-22 Weakness | Exploitation and Remediation",
             "url": "https://www.immuniweb.com/vulnerability/path-traversal.html"
           }
@@ -408,7 +403,7 @@
       "severity": "CRITICAL",
       "cve_id": null,
       "cwe_id": "CWE-22",
-      "created_at": "2026-10-29T17:13:42.220625+00:00"
+      "created_at": "2026-10-30T05:28:01.870367+00:00"
     },
     {
       "finding_id": "a933f45a0bba",
@@ -427,7 +422,7 @@
       "probe": null,
       "evidence": null,
       "verdict": {
-        "verdict_id": "v-b7e82a1e771c",
+        "verdict_id": "v-6869af36bd79",
         "finding_id": "a933f45a0bba",
         "status": "UNCONFIRMED",
         "score": 2.0,
@@ -455,7 +450,7 @@
       "severity": "HIGH",
       "cve_id": null,
       "cwe_id": null,
-      "created_at": "2026-10-29T17:13:42.220594+00:00"
+      "created_at": "2026-10-30T05:28:01.870312+00:00"
     },
     {
       "finding_id": "ac4384d52f8a",
@@ -472,7 +467,7 @@
         "code_snippet": "    return \"<h1>Results for \" + query + \"</h1>\""
       },
       "probe": {
-        "plan_id": "plan-caf269ab620b",
+        "plan_id": "plan-b6b5d15d9f67",
         "vuln_class": "xss",
         "target_file": "fixtures/vulnshop/app.py",
         "sink": "return \"<h1>Results for \" + query + \"</h1>\"",
@@ -483,12 +478,12 @@
         "parameter_name": "q",
         "suggested_payload": "<script>alert(1)</script>",
         "headers": {},
-        "rationale": "The q parameter is directly concatenated into the HTML response without escaping, causing the browser to execute the injected script payload when the page is rendered.",
+        "rationale": "The q parameter is directly concatenated into the HTML response without escaping, causing the script payload to be reflected verbatim in the response body.",
         "finding_id": "ac4384d52f8a"
       },
       "evidence": {
-        "evidence_id": "ev-f8f4609299a3",
-        "plan_id": "plan-caf269ab620b",
+        "evidence_id": "ev-ede0f10f1c2b",
+        "plan_id": "plan-b6b5d15d9f67",
         "payload": "<script>alert(1)</script>",
         "request": {
           "endpoint": "/search",
@@ -501,12 +496,12 @@
         "target_marker": "<script>alert(1)</script>",
         "matched_text": "<script>alert(1)</script>",
         "sandbox_branch_id": null,
-        "execution_time_ms": 1069.0155420161318,
-        "timestamp": "2026-10-29T17:13:48.915762+00:00",
+        "execution_time_ms": 1017.5879159942269,
+        "timestamp": "2026-10-30T05:28:13.568057+00:00",
         "truncated": false
       },
       "verdict": {
-        "verdict_id": "v-15c3d309e87e",
+        "verdict_id": "v-399f150d1f2b",
         "finding_id": "ac4384d52f8a",
         "status": "CONFIRMED",
         "score": 80.0,
@@ -528,7 +523,7 @@
         "gate_verdict": "NO_PASS"
       },
       "fix": {
-        "fix_id": "fix-85bdfd757bd3",
+        "fix_id": "fix-e0022a65d815",
         "finding_id": "ac4384d52f8a",
         "hunks": [
           {
@@ -550,18 +545,18 @@
         "provider": "tavily",
         "query": "CWE-79 cross-site scripting return \"<h1>Results for \" + query + \"</h1>\" Python remediation canonical fix CVE advisory",
         "advisory_ids": [
-          "CVE-2026-4512",
-          "CVE-2026-88903",
-          "CVE-2019-13478",
-          "CVE-2026-32890",
-          "CWE-79",
-          "CWE-7925",
           "CVE-2021-1879",
-          "CVE-2020-3580"
+          "CVE-2020-3580",
+          "CWE-79",
+          "CVE-2019-13478",
+          "CWE-7925",
+          "CVE-2014-8958",
+          "CVE-2017-9764",
+          "CVE-2014-5198"
         ],
         "cwe_id": "CWE-79",
         "affected_versions": [],
-        "canonical_fix": "CWE-79, or Cross-Site Scripting (XSS), is a web vulnerability allowing attackers to inject malicious scripts into trusted websites, executed by a victim\u2019s browser. The sources provide examples of XSS vulnerabilities, including CVE-2026-4512 in reCaptcha by WebDesignBy WordPress plugin and CVE-2026-88903 in Topcontent WordPress plugin. To remediate, ensure robust input validation, boundary checking, and use secure escaping libraries or templating engines. The sources also mention CVEs classified under CWE-79, such as CVE-2019-13478 and CVE-2026-32890, with CVSS scores ranging from 9.8 to 7.6. The sources do not provide a definitive answer to the specific remediation fix for Python, but suggest using secure escaping libraries or templating engines.",
+        "canonical_fix": "The sources provide a canonical fix for CWE-79, which is cross-site scripting (XSS), by using a secure escaping library or templating engine. Specifically, the example from Precogs AI Security suggests using `escapeHtml` to neutralize user input before rendering it in a web page. For instance, in a Python Flask application, the safe route uses `escape` to sanitize the input, while the unsafe route does not, making it vulnerable to XSS. The sources also list several CVEs classified under CWE-79, including CVE-2021-1879, CVE-2020-3580, and others, highlighting the severity and variety of XSS vulnerabilities.",
         "sources": [
           {
             "title": "CWE-79: Cross-site Scripting (XSS) | Precogs AI Security | Precogs AI",
@@ -572,16 +567,16 @@
             "url": "https://cwe.mitre.org/data/definitions/79.html"
           },
           {
-            "title": "What Is CWE-79 (Cross-Site Scripting, XSS)? | Attaxion",
-            "url": "https://attaxion.com/glossary/cwe-79-cross-site-scripting"
+            "title": "Cross-Site Scripting - XSS Vulnerability | CWE-79 Weakness | Exploitation and Remediation",
+            "url": "https://www.immuniweb.com/vulnerability/cross-site-scripting.html"
           },
           {
-            "title": "CVE-2026-4512: CWE-79 Cross-Site Scripting (XSS) in\u2026 | Threat Radar",
-            "url": "https://radar.offseq.com/threat/cve-2026-4512-cwe-79-cross-site-scripting-xss-in-r-bdf28973"
+            "title": "Reflected server-side cross-site scripting \u2014 CodeQL query help documentation",
+            "url": "https://codeql.github.com/codeql-query-help/python/py-reflective-xss"
           },
           {
-            "title": "CVE-2026-88903: CWE-79 Cross-Site Scripting (XSS) in\u2026 | Threat Radar",
-            "url": "https://radar.offseq.com/threat/cve-2026-88903-cwe-79-cross-site-scripting-xss-in-topcontent-2a3a255318e85e9c"
+            "title": "All About CWE-79: Cross-Site Scripting | FOSSA Blog",
+            "url": "https://fossa.com/blog/all-about-cwe-79-cross-site-scripting"
           }
         ],
         "note": null
@@ -591,7 +586,7 @@
       "severity": "HIGH",
       "cve_id": null,
       "cwe_id": "CWE-79",
-      "created_at": "2026-10-29T17:13:42.220634+00:00"
+      "created_at": "2026-10-30T05:28:01.870388+00:00"
     }
   ],
   "findings_count": 5,
