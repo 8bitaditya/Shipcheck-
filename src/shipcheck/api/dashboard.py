@@ -72,7 +72,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   <span class="tag">Adversarial verification gate — a human always merges</span>
 </header>
 <main>
-  <div class="panel">
+  <div class="panel" id="inputs">
     <div class="kv">Paste a PR diff and the changed files (JSON: path → content), or load the recorded demo.</div>
     <div class="row"><textarea id="diff" rows="3" placeholder="diff --git a/app.py b/app.py ..."></textarea></div>
     <div class="row"><textarea id="files" rows="4" placeholder='{ "app.py": "def login(): ..." }'></textarea></div>
@@ -175,8 +175,9 @@ function render(r){
 }
 
 async function load(url, opts){
+  const scanBtn=$('#scan'), demoBtn=$('#demo');
   $('#status').textContent='Scanning…';
-  $('#scan').disabled=true; $('#demo').disabled=true;
+  if(scanBtn) scanBtn.disabled=true; if(demoBtn) demoBtn.disabled=true;
   try{
     const res=await fetch(url, opts);
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -185,7 +186,7 @@ async function load(url, opts){
     $('#status').textContent = src==='golden' ? 'Replayed a recorded real scan (golden run).'
       : src==='sample' ? 'Showing a hand-built sample (no golden run recorded).' : 'Done.';
   }catch(e){ $('#status').textContent='Error: '+e.message; }
-  finally{ $('#scan').disabled=publicDemo; $('#demo').disabled=false; }
+  finally{ if(scanBtn) scanBtn.disabled=publicDemo; if(demoBtn) demoBtn.disabled=false; }
 }
 
 $('#demo').onclick = () => load('/api/demo');
@@ -193,9 +194,15 @@ $('#demo').onclick = () => load('/api/demo');
 fetch('/api/config').then(r => r.json()).then(cfg => {
   if (!cfg.public_demo) return;
   publicDemo = true;
-  $('#scan').disabled = true;
-  $('#scan').title = 'Live scans are disabled on the public demo';
-  $('#diff').disabled = true; $('#files').disabled = true;
+  $('#inputs').innerHTML =
+    '<div class="kv">This is a <strong>recorded real scan</strong> of the <code>vulnshop</code> demo app: '
+    + 'every verdict below came from a live exploit fired in an isolated sandbox, and every fix was '
+    + 're-attacked and regression-tested before it was accepted.</div>'
+    + '<div class="kv" style="margin-top:8px">Scanning your own code is disabled here, because a scan '
+    + 'executes the submitted code and spends model credits. '
+    + '<a href="https://github.com/8bitaditya/Shipcheck-" target="_blank" rel="noopener noreferrer">'
+    + 'Run ShipCheck locally</a> to scan a repo of your own.</div>'
+    + '<div class="row"><span id="status" class="muted"></span></div>';
   load('/api/demo');
 }).catch(() => {});
 $('#scan').onclick = () => {
