@@ -112,12 +112,12 @@ def test_public_demo_disables_live_scans(client, monkeypatch):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 403 and called == []
-    assert client.get("/api/config").json() == {"public_demo": True}
+    assert client.get("/api/config").json()["public_demo"] is True
     assert client.get("/api/demo").status_code == 200  # the replay still works
 
 
 def test_live_scans_allowed_by_default(client):
-    assert client.get("/api/config").json() == {"public_demo": False}
+    assert client.get("/api/config").json()["public_demo"] is False
 
 
 def test_static_demo_build_matches_the_app(tmp_path):
@@ -141,3 +141,87 @@ def test_static_demo_build_matches_the_app(tmp_path):
     assert f'"confirmed_count":{golden["confirmed_count"]}' in html
     assert "</script>" not in html.split("const DEMO = ")[1].split("\n")[0]  # data can't break out
     assert len(html) < 2_000_000
+
+
+# --------------------------------------------------------------------------- #
+# Live demo scan: fixed target, opt-in, rate limited                          #
+# --------------------------------------------------------------------------- #
+def _enable_live(monkeypatch, per_hour=6):
+    from shipcheck import config
+    from shipcheck.api import main as api
+
+    monkeypatch.setattr(config, "LIVE_DEMO_SCAN", True)
+    monkeypatch.setattr(config, "NEBIUS_API_KEY", "test-key")
+    monkeypatch.setattr(config, "LIVE_DEMO_MAX_PER_HOUR", per_hour)
+    api._demo_scan_runs.clear()
+
+
+def _canned_result():
+    return ScanResult(commit_sha="vulnshop-demo", findings=[], findings_count=0,
+                      confirmed_count=0, fixed_count=0, overall_risk_score=0.0)
+
+
+def test_live_demo_scan_is_off_by_default(client):
+    assert client.get("/api/config").json()["live_demo_scan"] is False
+    assert client.post("/api/demo-scan").status_code == 403
+
+
+def test_live_demo_scan_needs_credentials(client, monkeypatch):
+    from shipcheck import config
+
+    monkeypatch.setattr(config, "LIVE_DEMO_SCAN", True)
+    monkeypatch.setattr(config, "NEBIUS_API_KEY", "")
+    assert client.get("/api/config").json()["live_demo_scan"] is False
+    assert client.post("/api/demo-scan").status_code == 503
+
+
+def test_live_demo_scan_runs_and_takes_no_input(client, monkeypatch):
+    from shipcheck.api.main import get_demo_scan_runner
+
+    _enable_live(monkeypatch)
+    calls = []
+
+    async def runner():  # no parameters: nothing from the request reaches the scan
+        calls.append(1)
+        return _canned_result(), 1.0
+
+    app.dependency_overrides[get_demo_scan_runner] = lambda: runner
+    try:
+        # a body is ignored entirely -- the target is always the bundled fixture
+        resp = client.post("/api/demo-scan", json={"source_files": {"evil.py": "import os"}})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200 and len(calls) == 1
+    assert resp.json()["commit_sha"] == "vulnshop-demo"
+    assert client.get("/api/config").json()["live_demo_scan"] is True
+
+
+def test_live_demo_scan_is_rate_limited(client, monkeypatch):
+    from shipcheck.api.main import get_demo_scan_runner
+
+    _enable_live(monkeypatch, per_hour=2)
+
+    async def runner():
+        return _canned_result(), 1.0
+
+    app.dependency_overrides[get_demo_scan_runner] = lambda: runner
+    try:
+        assert client.post("/api/demo-scan").status_code == 200
+        assert client.post("/api/demo-scan").status_code == 200
+        blocked = client.post("/api/demo-scan")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert blocked.status_code == 429
+    assert "2 scans an hour" in blocked.json()["detail"]
+
+
+def test_live_demo_scan_target_is_the_bundled_fixture():
+    """The scan helper reads the shipped fixture, never anything from a request."""
+    from shipcheck.demo import APP_DIR, VULNSHOP, vulnshop_files
+
+    files = vulnshop_files()
+    assert VULNSHOP.is_dir()
+    assert set(files) >= {f"{APP_DIR}/app.py", f"{APP_DIR}/test_app.py"}
+    assert all(k.startswith(f"{APP_DIR}/") for k in files)

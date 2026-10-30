@@ -30,54 +30,14 @@ APP_DIR = "fixtures/vulnshop"
 
 
 async def scan(backend: str = "mock") -> str:
-    from shipcheck.orchestrator import ShipCheckScanner
-    from shipcheck.probes.harness import ProbeHarness
-    from shipcheck.rectify.fixer import RectificationEngine
-    from shipcheck.sandbox.client import SandboxClient
+    from shipcheck.demo import run_vulnshop_scan
 
-    sandbox = SandboxClient(backend_type=backend).create_sandbox()
-    src = REPO / APP_DIR
-    files = {
-        f"{APP_DIR}/{p.relative_to(src)}": p.read_text()
-        for p in src.rglob("*")
-        if p.is_file() and not {"__pycache__", ".pytest_cache"} & set(p.parts)
-    }
-    await sandbox.apply_files(files)
-
-    if backend == "docker":
-        # Each sandbox is its own container: own loopback, own Python.
-        port, py, concurrency = 5000, "python", 4
-    else:
-        # Local sandboxes share the host's network and ports: one at a time.
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
-        py, concurrency = shlex.quote(sys.executable), 1
-    harness = ProbeHarness(port=port)
-    scanner = ShipCheckScanner(
-        harness=harness,
-        rectifier=RectificationEngine(harness=harness),
-        max_concurrent=concurrency,
-    )
-    app_py = files[f"{APP_DIR}/app.py"]
-    diff = (
-        f"diff --git a/{APP_DIR}/app.py b/{APP_DIR}/app.py\nnew file mode 100644\n"
-        f"--- /dev/null\n+++ b/{APP_DIR}/app.py\n"
-        + "".join("+" + line + "\n" for line in app_py.splitlines())
-    )
-    t = time.monotonic()
-    result = await scanner.scan(
-        sandbox, diff, commit_sha="vulnshop-golden",
-        app_cmd=f"PORT={port} {py} app.py",
-        target_dir=f"{sandbox.default_workdir}/{APP_DIR}",
-        test_cmd=f"cd {APP_DIR} && {py} -m pytest -q test_app.py",
-    )
-    print(f"[{backend}] scan took {time.monotonic() - t:.1f}s: {result.findings_count} findings, "
+    result, seconds = await run_vulnshop_scan(backend, commit_sha="vulnshop-golden")
+    print(f"[{backend}] scan took {seconds:.1f}s: {result.findings_count} findings, "
           f"{result.confirmed_count} confirmed, {result.fixed_count} fixed")
     for f in sorted(result.findings, key=lambda f: -f.score):
         print(f"  {f.vuln_class.value:9} {f.target.file}:{f.target.line} {f.target.endpoint or '-':10} "
               f"score={f.score:5} fix={f.fix.status.value if f.fix else '-'}")
-    sandbox.cleanup()
     return result.model_dump_json()
 
 

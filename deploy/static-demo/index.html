@@ -190,10 +190,13 @@ async function load(url, opts){
   if(scanBtn) scanBtn.disabled=true; if(demoBtn) demoBtn.disabled=true;
   try{
     const res=await fetch(url, opts);
-    if(!res.ok) throw new Error('HTTP '+res.status);
+    if(!res.ok){ let m='HTTP '+res.status;
+      try{ const b=await res.json(); if(b && b.detail) m=b.detail; }catch(e){}
+      throw new Error(m); }
     render(await res.json());
     const src=res.headers.get('X-ShipCheck-Demo-Source');
-    $('#status').textContent = publicDemo ? '' : src==='golden' ? 'Replayed a recorded real scan (golden run).'
+    $('#status').textContent = url.includes('demo-scan') ? 'Live scan complete.'
+      : publicDemo ? '' : src==='golden' ? 'Replayed a recorded real scan (golden run).'
       : src==='sample' ? 'Showing a hand-built sample (no golden run recorded).' : 'Done.';
   }catch(e){ $('#status').textContent='Error: '+e.message; }
   finally{ if(scanBtn) scanBtn.disabled=publicDemo; if(demoBtn) demoBtn.disabled=false; }
@@ -213,8 +216,18 @@ fetch('/api/config').then(r => r.json()).then(cfg => {
     + 'before it passed. '
     + '<a href="https://github.com/8bitaditya/Shipcheck-" target="_blank" rel="noopener noreferrer">'
     + 'Source and setup on GitHub</a>.</div>'
-    + '<div class="row"><span id="status" class="muted"></span></div>';
+    + '<div class="row">'
+    + (cfg.live_demo_scan
+        ? '<button id="live">Run a live scan now</button>'
+          + '<span class="pill">real scan of vulnshop &middot; ~40s</span>'
+        : '')
+    + '<span id="status" class="muted"></span></div>';
   load('/api/demo');
+  const live = $('#live');
+  if (live) live.onclick = () => {
+    live.disabled = true;
+    load('/api/demo-scan', {method: 'POST'}).finally(() => { live.disabled = false; });
+  };
 }).catch(() => {});
 $('#scan').onclick = () => {
   let files={};

@@ -19,6 +19,8 @@ COPY src/ /app/src/
 COPY tests/ /app/tests/
 # Recorded real scan replayed by GET /api/demo (no live calls during judging)
 COPY golden/ /app/golden/
+# the only target a live demo scan may run (fixed, never caller input)
+COPY fixtures/ /app/fixtures/
 
 # Install package in editable mode
 RUN pip install --no-cache-dir -e .

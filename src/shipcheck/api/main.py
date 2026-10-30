@@ -12,9 +12,12 @@ golden-run replay) can override it without the real sandbox/LLM pipeline.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import shlex
 import socket
 import sys
+import time
 from typing import Callable, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -28,6 +31,7 @@ from shipcheck.contracts.evidence import Evidence
 from shipcheck.contracts.finding import Finding, FindingTarget
 from shipcheck.contracts.fix import DiffHunk, FixPatch, FixStatus
 from shipcheck.contracts.verdict import SeverityLevel, VerdictCard
+from shipcheck.demo import run_vulnshop_scan
 from shipcheck.golden import load_golden
 from shipcheck.orchestrator import ScanResult, ShipCheckScanner
 from shipcheck.planning.tavily_client import TavilyGroundingClient
@@ -35,6 +39,8 @@ from shipcheck.probes.harness import ProbeHarness
 from shipcheck.rectify.fixer import RectificationEngine
 from shipcheck.sandbox.client import SandboxClient
 from shipcheck.sandbox.local_docker_backend import LocalDockerBackend
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ShipCheck", version="0.1.0")
 
@@ -114,7 +120,49 @@ async def health() -> Dict[str, str]:
 @app.get("/api/config")
 async def api_config() -> Dict[str, bool]:
     """What the dashboard may offer on this deployment."""
-    return {"public_demo": config.PUBLIC_DEMO}
+    return {
+        "public_demo": config.PUBLIC_DEMO,
+        "live_demo_scan": config.LIVE_DEMO_SCAN and bool(config.NEBIUS_API_KEY),
+    }
+
+
+# A live demo scan is safe to expose because its target is fixed (the bundled
+# fixture, never caller input), but it still costs model credits and a sandbox,
+# so one runs at a time and only LIVE_DEMO_MAX_PER_HOUR per hour.
+_demo_scan_lock = asyncio.Lock()
+_demo_scan_runs: List[float] = []
+
+
+def get_demo_scan_runner() -> Callable[[], "ScanResult"]:
+    """Dependency returning the fixed-target scan runner. Overridden in tests."""
+    return run_vulnshop_scan
+
+
+@app.post("/api/demo-scan", response_model=ScanResult)
+async def demo_scan(runner=Depends(get_demo_scan_runner)) -> ScanResult:
+    """Run a REAL scan of the bundled vulnshop fixture. Takes no input."""
+    if not config.LIVE_DEMO_SCAN:
+        raise HTTPException(status_code=403, detail="Live demo scans are not enabled on this deployment.")
+    if not config.NEBIUS_API_KEY:
+        raise HTTPException(status_code=503, detail="No model credentials configured for a live scan.")
+
+    cutoff = time.monotonic() - 3600
+    _demo_scan_runs[:] = [t for t in _demo_scan_runs if t > cutoff]
+    if len(_demo_scan_runs) >= config.LIVE_DEMO_MAX_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail=f"The live demo runs at most {config.LIVE_DEMO_MAX_PER_HOUR} scans an hour. "
+                   f"The recorded run is always available at /api/demo.",
+        )
+    if _demo_scan_lock.locked():
+        raise HTTPException(status_code=429, detail="A live scan is already running. Try again in a minute.")
+
+    async with _demo_scan_lock:
+        _demo_scan_runs.append(time.monotonic())
+        result, seconds = await runner()
+    logger.info("Live demo scan finished in %.1fs: %d confirmed, %d fixed",
+                seconds, result.confirmed_count, result.fixed_count)
+    return result
 
 
 @app.post("/scan", response_model=ScanResult)

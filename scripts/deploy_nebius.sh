@@ -43,6 +43,17 @@ docker push "$IMAGE"
 fi
 
 echo "== endpoint"
+# LIVE_DEMO=1 also exposes POST /api/demo-scan: a real, rate-limited scan of
+# the bundled fixture (never caller input), which needs model credentials.
+ENV_FLAGS=(--env "SHIPCHECK_PUBLIC_DEMO=1")
+if [ "${LIVE_DEMO:-}" = "1" ]; then
+  : "${NEBIUS_API_KEY:?set NEBIUS_API_KEY for LIVE_DEMO=1}"
+  ENV_FLAGS+=(--env "SHIPCHECK_LIVE_DEMO_SCAN=1" --env "LLM_BACKEND=nemotron")
+  ENV_FLAGS+=(--env "SANDBOX_BACKEND=${SANDBOX_BACKEND:-contree}")
+  ENV_FLAGS+=(--env "NEBIUS_API_KEY=${NEBIUS_API_KEY}")
+  [ -n "${NEBIUS_PROJECT_ID:-}" ] && ENV_FLAGS+=(--env "NEBIUS_PROJECT_ID=${NEBIUS_PROJECT_ID}")
+  [ -n "${TAVILY_API_KEY:-}" ] && ENV_FLAGS+=(--env "TAVILY_API_KEY=${TAVILY_API_KEY}")
+fi
 SUBNET_ID="${SUBNET_ID:-$("$NEBIUS" vpc subnet list --format json | jq -r '.items[0].metadata.id')}"
 "$NEBIUS" ai endpoint create \
   --name "$NAME" \
@@ -50,6 +61,7 @@ SUBNET_ID="${SUBNET_ID:-$("$NEBIUS" vpc subnet list --format json | jq -r '.item
   --platform "$PLATFORM" \
   --preset "$PRESET" \
   --container-port 8000/http \
+  "${ENV_FLAGS[@]}" \
   --auth none \
   --subnet-id "$SUBNET_ID"
 

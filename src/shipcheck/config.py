@@ -64,6 +64,12 @@ SANDBOX_BACKEND: str = os.getenv("SANDBOX_BACKEND", "mock").lower()
 # spends model/search credits) and the dashboard replays the golden run.
 PUBLIC_DEMO: bool = os.getenv("SHIPCHECK_PUBLIC_DEMO", "").lower() in ("1", "true", "yes")
 
+# Opt-in on a public deployment: POST /api/demo-scan runs a REAL scan, but only
+# ever of the bundled fixtures/vulnshop (no caller input is executed). Capped so
+# visitors cannot drain model credits.
+LIVE_DEMO_SCAN: bool = os.getenv("SHIPCHECK_LIVE_DEMO_SCAN", "").lower() in ("1", "true", "yes")
+LIVE_DEMO_MAX_PER_HOUR: int = int(os.getenv("SHIPCHECK_LIVE_DEMO_MAX_PER_HOUR", "6"))
+
 # 'docker' backend: one container per sandbox from the probe image
 # (build: docker build --platform linux/amd64 -t shipcheck-probe:latest -f
 #  src/shipcheck/sandbox/image/Dockerfile.probe src/shipcheck/sandbox/image)
