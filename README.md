@@ -9,6 +9,8 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (Coding and Agentic Engine
 
 ---
 
+**Live demo:** [https://parthdevai-shipcheck.static.hf.space](https://parthdevai-shipcheck.static.hf.space) — replays a recorded real scan of `vulnshop` (4 of 4 bugs confirmed, fixed and re-verified). Live scanning is disabled there, because a scan executes submitted code and spends model credits.
+
 ## 📌 The Problem
 
 Static analysis tools produce a lot of false positives. A developer sees dozens of vague warnings, ignores them, and merges anyway. Published studies put the vulnerability rate of AI-generated code at 25–45%, and AI-written PRs often come with tests that turn CI green without checking any security boundary.

@@ -3,7 +3,7 @@
 This follows the PRD §10 beats. The audio must cover Token Factory and Nemotron (a submission requirement). Total length is 2:55. Record the screen at 1080p and upload the video to YouTube as **Public**.
 
 **Before recording:**
-- Open the dashboard at the demo URL, or at `http://localhost:8000`, with **Load demo** ready.
+- Open the dashboard at https://parthdevai-shipcheck.static.hf.space (or `http://localhost:8000`) with **Load demo** ready.
 - Open [PR #1](https://github.com/8bitaditya/Shipcheck-/pull/1) in a second tab.
 - Open `fixtures/vulnshop/app.py` in the editor, scrolled to `login()`.
 - Optional live beat: a terminal ready to run `python scripts/record_golden.py --backend docker`, which runs a real scan in about 40 s.

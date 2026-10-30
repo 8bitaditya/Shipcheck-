@@ -8,7 +8,7 @@ Copy each section into the matching Devpost field. Fill in the demo URL and vide
 
 **Links**
 - Repo: https://github.com/8bitaditya/Shipcheck- (Apache-2.0)
-- Demo: `<DEMO_URL>` (replays a recorded real scan; live scans are disabled on the public URL)
+- Demo: https://parthdevai-shipcheck.static.hf.space (replays a recorded real scan; live scans are disabled on the public URL) — Space page: https://huggingface.co/spaces/ParthDevAI/shipcheck
 - Video: `<YOUTUBE_URL>`
 - Example draft PR opened by ShipCheck: https://github.com/8bitaditya/Shipcheck-/pull/1
 
