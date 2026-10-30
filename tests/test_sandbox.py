@@ -175,7 +175,8 @@ class TestSandbox(unittest.IsolatedAsyncioTestCase):
             await sandbox.apply_files({"server.py": server_code})
             probe_result = await client.run_chained_probe(
                 sandbox=sandbox,
-                app_cmd=f"python server.py {port}",
+                # sys.executable: macOS has no bare `python` outside a venv
+                app_cmd=f'"{sys.executable}" server.py {port}',
                 probe_cmd=f"curl -s http://127.0.0.1:{port}/",
                 target_dir=str(sandbox.workdir),
                 health_path="/",
